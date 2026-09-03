@@ -226,7 +226,7 @@ always positional data."
 ;;; Process setup
 
 (defun hey-cli--sanitized-environment ()
-  "Return a per-request environment safe for noninteractive HEY reads."
+  "Return a safe per-request environment for noninteractive HEY access."
   (let ((process-environment (copy-sequence process-environment)))
     (dolist (name hey-cli--removed-environment-variables)
       (setenv name nil))

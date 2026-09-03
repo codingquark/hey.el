@@ -12,3 +12,4 @@ All notable changes to this project will be documented in this file.
 - Reuse bundle buffers and make the synthetic bundle expand to readable
   threads instead of recursively producing another bundle.
 - Publish project metadata and package licensing under the MIT License.
+- Keep strict Checkdoc failures compatible with every supported Emacs target.

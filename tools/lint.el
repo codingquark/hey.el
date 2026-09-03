@@ -14,12 +14,28 @@
 
 (hey-build-initialize-packages t)
 
+(defun hey-build-checkdoc-current-buffer ()
+  "Check the current buffer and fail batch execution on diagnostics."
+  (let ((checkdoc-autofix-flag nil)
+        (checkdoc-pending-errors nil))
+    ;; `checkdoc-batch' was added after the oldest supported Emacs.  Prevent
+    ;; the interactive display helper from clearing the diagnostic flag, then
+    ;; turn that flag into a batch failure ourselves.
+    (cl-letf (((symbol-function 'checkdoc-show-diagnostics) #'ignore))
+      (checkdoc-current-buffer t))
+    (when checkdoc-pending-errors
+      (when-let* ((diagnostics (get-buffer checkdoc-diagnostic-buffer)))
+        (with-current-buffer diagnostics
+          (princ (buffer-string)))
+        (terpri))
+      (error "checkdoc reported diagnostics"))))
+
 (dolist (file (hey-build-library-files))
   (when-let* ((diagnostics (get-buffer checkdoc-diagnostic-buffer)))
     (kill-buffer diagnostics))
   (setq checkdoc-pending-errors nil)
   (with-current-buffer (find-file-noselect (hey-build-path file))
-    (checkdoc-batch)))
+    (hey-build-checkdoc-current-buffer)))
 
 (let ((failed nil)
       (main-file (hey-build-path "hey.el")))

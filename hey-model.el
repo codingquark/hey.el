@@ -73,7 +73,7 @@ KIND is the symbol `bundle' for a bundle row and `thread' otherwise."
   (and (hey-model--object-p object) (cdr (assoc-string key object))))
 
 (defun hey-model--has-key-p (key object)
-  "Return non-nil when alist OBJECT contains string KEY."
+  "Return non-nil if string KEY is present in alist OBJECT."
   (and (hey-model--object-p object) (assoc-string key object)))
 
 (defun hey-model--object-p (value)
@@ -162,7 +162,7 @@ produces the empty string so absent and null JSON fields remain non-fatal."
       (string-trim (replace-regexp-in-string " +" " " value t t)))))
 
 (defun hey-model-validate-app-url (string)
-  "Return STRING when it uses the exact official HEY origin, else nil.
+  "Return STRING for an exact official HEY-origin URL; otherwise return nil.
 
 The accepted origin is `https://app.hey.com' with no user information and no
 explicit port.  Whitespace, controls, backslashes, and bidi controls are also
