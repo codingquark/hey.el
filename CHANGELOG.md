@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-09-03
 
 - Establish the standalone three-library package structure.
 - Add normalized model, closed read-command transport, and read-only UI seams.
@@ -23,3 +23,5 @@ All notable changes to this project will be documented in this file.
   timestamps.
 - Allocate responsive list width to subjects and omit the memberships column
   when every loaded row has no memberships.
+- Generate package descriptors from `hey.el` metadata instead of tracking
+  `hey-pkg.el`, matching MELPA packaging conventions.

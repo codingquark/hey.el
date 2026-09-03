@@ -5,8 +5,7 @@ built as a focused mail reader: browse boxes and bundles, search, inspect
 threads, and navigate labels or collections without exposing mailbox mutation
 commands.
 
-The project is under active development at
-<https://github.com/codingquark/hey.el>. It is not released to MELPA yet.
+The project is maintained at <https://github.com/codingquark/hey.el>.
 
 ## Requirements
 
@@ -21,10 +20,20 @@ store bearer tokens.
 A posting is seen only when the CLI returns literal JSON `true` in its `seen`
 field. `false`, `null`, a missing field, or any other value is shown as unseen.
 
-## Development-checkout installation
+## Installation
 
-Add the checkout to `load-path` and let `use-package` discover the autoloaded
-entry command:
+Until the MELPA recipe is accepted, install the current release directly from
+the repository with Emacs 29 or newer:
+
+```elisp
+(package-vc-install "https://github.com/codingquark/hey.el")
+```
+
+After the recipe is accepted, refresh MELPA and run `M-x package-install RET
+hey RET` (or use `:ensure t` with `use-package`).
+
+For development, add the checkout to `load-path` and let `use-package`
+discover the autoloaded entry command:
 
 ```elisp
 (add-to-list 'load-path (expand-file-name "/path/to/hey.el"))
@@ -128,8 +137,9 @@ repository's scenario-driven fake executable; a missing fake is a hard failure,
 never a fallback to an installed `hey` program.
 
 The package target creates a deterministic multi-file tar archive in `dist/`.
-Only `hey.el`, `hey-cli.el`, `hey-model.el`, `hey-pkg.el`, and `LICENSE` enter
-that artifact.
+Only `hey.el`, `hey-cli.el`, `hey-model.el`, `LICENSE`, and a generated
+`hey-pkg.el` descriptor enter that artifact.  The descriptor is derived from
+the package headers in `hey.el`; it is not tracked in the repository.
 
 See `docs/read-only-plan.md` for the architecture, scope, security properties,
 and milestone gates.

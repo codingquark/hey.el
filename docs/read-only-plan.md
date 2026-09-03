@@ -946,8 +946,9 @@ Create the standalone repository and establish:
 - an ERT runner, shared test helper, scenario-driven fake executable, and CI
   matrix for every automated process test;
 - a pinned multi-file package-build workflow with an explicit runtime-file
-  allowlist; tests, fixtures, local ledgers, `AGENTS.md`, Makefile, and CI files
-  must not enter the package artifact;
+  allowlist and a generated `hey-pkg.el` derived from the main library headers;
+  the generated descriptor is not tracked, and tests, fixtures, local ledgers,
+  `AGENTS.md`, Makefile, and CI files must not enter the package artifact;
 - the canonical copy of this plan and fixture provenance documentation.
 
 **Automated gate:** under isolated `emacs -Q`, load and byte-compile all three

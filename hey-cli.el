@@ -3,7 +3,8 @@
 ;; Copyright (C) 2026 codingquark
 ;; SPDX-License-Identifier: MIT
 
-;; Author: codingquark
+;; Author: Dhavan Vaidya <456712+codingquark@users.noreply.github.com>
+;; Assisted-by: Codex:gpt-5
 ;; Keywords: mail
 ;; URL: https://github.com/codingquark/hey.el
 

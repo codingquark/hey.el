@@ -58,7 +58,7 @@
 - [ ] Perform authenticated testing against already-seen mail.
 - [ ] Separately approve any unseen-thread test.
 - [x] Approve public remote creation.
-- [ ] Approve a release tag and MELPA submission.
+- [x] Approve the `v0.1.0` release tag and MELPA submission.
 
 ## Milestones
 
@@ -77,15 +77,17 @@
 - [ ] M6: evidence-backed refinement after human prototype review and dogfood;
       the approved scanability packet covers current-row highlighting,
       humanized dates, and subject-first responsive columns.
-- [ ] M7: dogfood and user-approved publication. Package construction and clean
-      install verification are complete.
+- [ ] M7: dogfood and user-approved publication. Package construction, clean
+      install verification, and publication approval are complete; upstream
+      submission remains to be accepted by MELPA.
 
 ## Active work packets
 
 The M6 scanability packet approved from the Modus/Elfeed comparison is complete
-and passes the full local gate. Remaining work includes human-performed
-authenticated already-seen-mail validation, further evidence-driven dogfood
-refinement, and publication decisions.
+and passes the full local gate. Publication of v0.1.0 and a MELPA recipe is
+approved. Remaining work includes human-performed authenticated
+already-seen-mail validation, further evidence-driven dogfood refinement, and
+MELPA review.
 
 ## Acceptance evidence
 
@@ -98,7 +100,7 @@ refinement, and publication decisions.
   checksum-pinned archive overrides — the same 74/74 and all build stages
   passed without dependency network access.
 - The current package artifact has SHA-256
-  `ce9a3618853e37d30cede2310e6a65e4750b00ddabba5f852adc1ad87df572f2`.
+  `d14a9ff8f9ad17accd0bdcd812ba439f5ddcfd78697bfe21dee63bc07a36054a`.
 - The user approved the fake-backed list, bundle, and thread interaction on
   2026-09-03 and authorized proceeding to an already-seen-mail validation.
 - The user approved theme-owned current-row highlighting, humanized dates, and
@@ -107,9 +109,10 @@ refinement, and publication decisions.
 - The downstream literate Emacs configuration loads the development checkout,
   binds `C-c e` to `hey`, and passes its required batch startup smoke test.
 - Public hosting is approved at `https://github.com/codingquark/hey.el` under
-  the MIT License; release tagging and MELPA submission remain gated.
+  the MIT License; the user approved the v0.1.0 tag and MELPA submission on
+  2026-09-03.
 - The archive contains exactly `hey.el`, `hey-cli.el`, `hey-model.el`,
-  `hey-pkg.el`, and `LICENSE`.
+  `LICENSE`, and a generated `hey-pkg.el` descriptor.
 - Independent security review confirmed the current builders expose no mailbox
   mutation route and that prior cleanup, process-orphan, path, fake-boundary,
   and audit-bypass findings were remediated.

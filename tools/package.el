@@ -12,19 +12,6 @@
        "common.el" (file-name-directory (or load-file-name buffer-file-name)))
       nil 'nomessage)
 
-(defun hey-build-descriptor ()
-  "Read and return the `define-package' form from hey-pkg.el."
-  (with-temp-buffer
-    (insert-file-contents (hey-build-path "hey-pkg.el"))
-    (let (form result)
-      (condition-case nil
-          (while (not result)
-            (setq form (read (current-buffer)))
-            (when (eq (car-safe form) 'define-package)
-              (setq result form)))
-        (end-of-file))
-      (or result (error "hey-pkg.el has no define-package form")))))
-
 (defun hey-build-tar-store (header offset width value)
   "Store ASCII VALUE in HEADER at OFFSET within WIDTH bytes."
   (let ((bytes (string-make-unibyte value)))
@@ -73,6 +60,19 @@
     (insert-file-contents (hey-build-path "hey.el"))
     (package-buffer-info)))
 
+(defun hey-build-package-descriptor-bytes (description)
+  "Return generated hey-pkg.el bytes for package DESCRIPTION."
+  (let ((temporary (make-temp-file "hey-pkg-" nil ".el")))
+    (unwind-protect
+        (progn
+          (package-generate-description-file description temporary)
+          (replace-regexp-in-string
+           "\\`;;; Generated package description from [^\n]+"
+           ";;; Generated package description from hey.el  -*- no-byte-compile: t -*-"
+           (hey-build-file-bytes temporary) t t))
+      (when (file-exists-p temporary)
+        (delete-file temporary)))))
+
 (defun hey-build-tar-entry (name bytes)
   "Return a deterministic regular-file tar entry NAME containing BYTES."
   (let* ((size (length bytes))
@@ -81,26 +81,16 @@
             bytes
             (string-make-unibyte (make-string padding 0)))))
 
-(let* ((descriptor (hey-build-descriptor))
-       (name (nth 1 descriptor))
-       (version (nth 2 descriptor))
-       (descriptor-info
-        (apply #'package-desc-from-define (cdr descriptor)))
+(let* ((description (hey-build-main-package-description))
+       (name (symbol-name (package-desc-name description)))
+       (version (package-version-join (package-desc-version description)))
        (directory (format "%s-%s/" name version))
        (expected-output (hey-build-path "dist" (format "%s-%s.tar" name version)))
        (configured-output (or (getenv "HEY_PACKAGE_FILE") expected-output))
        (output (expand-file-name configured-output))
        (archive (hey-build-tar-header directory 0 "5" #o755)))
   (unless (equal name "hey")
-    (error "Unexpected package name in descriptor: %s" name))
-  (let ((main-info (hey-build-main-package-description)))
-    (unless (and (eq (package-desc-name main-info)
-                     (package-desc-name descriptor-info))
-                 (equal (package-desc-version main-info)
-                        (package-desc-version descriptor-info))
-                 (equal (package-desc-reqs main-info)
-                        (package-desc-reqs descriptor-info)))
-      (error "hey.el and hey-pkg.el package metadata do not match")))
+    (error "Unexpected package name in hey.el metadata: %s" name))
   (unless (equal output expected-output)
     (error "HEY_PACKAGE_FILE must match descriptor version: %s" expected-output))
   (dolist (relative (hey-build-runtime-files))
@@ -115,6 +105,11 @@
               (concat archive
                       (hey-build-tar-entry
                        (concat directory relative) bytes))))))
+  (setq archive
+        (concat archive
+                (hey-build-tar-entry
+                 (concat directory "hey-pkg.el")
+                 (hey-build-package-descriptor-bytes description))))
   (setq archive
         (concat archive (string-make-unibyte (make-string 1024 0))))
   (make-directory (file-name-directory output) t)

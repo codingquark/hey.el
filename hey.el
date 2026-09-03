@@ -3,7 +3,8 @@
 ;; Copyright (C) 2026 codingquark
 ;; SPDX-License-Identifier: MIT
 
-;; Author: codingquark
+;; Author: Dhavan Vaidya <456712+codingquark@users.noreply.github.com>
+;; Assisted-by: Codex:gpt-5
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.2") (markdown-mode "2.8"))
 ;; Keywords: mail, comm
