@@ -1,11 +1,13 @@
 ;;; hey.el --- Read HEY mail without mailbox mutations  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2026
+;; Copyright (C) 2026 codingquark
+;; SPDX-License-Identifier: MIT
 
 ;; Author: codingquark
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.2") (markdown-mode "2.8"))
 ;; Keywords: mail, comm
+;; URL: https://github.com/codingquark/hey.el
 
 ;;; Commentary:
 

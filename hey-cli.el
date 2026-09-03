@@ -1,9 +1,11 @@
 ;;; hey-cli.el --- Closed HEY CLI transport  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2026
+;; Copyright (C) 2026 codingquark
+;; SPDX-License-Identifier: MIT
 
 ;; Author: codingquark
 ;; Keywords: mail
+;; URL: https://github.com/codingquark/hey.el
 
 ;;; Commentary:
 

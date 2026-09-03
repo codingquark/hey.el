@@ -57,7 +57,7 @@ When NEED-PACKAGE-LINT is non-nil, require `package-lint' as well."
 
 (defun hey-build-runtime-files ()
   "Return the ordered explicit runtime package file allowlist."
-  '("hey.el" "hey-cli.el" "hey-model.el" "hey-pkg.el"))
+  '("hey.el" "hey-cli.el" "hey-model.el" "hey-pkg.el" "LICENSE"))
 
 (defun hey-build-library-files ()
   "Return the ordered Emacs Lisp library file list."

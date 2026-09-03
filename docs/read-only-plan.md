@@ -4,6 +4,8 @@
 **Last updated:** 2026-09-03
 **Working name:** `hey` (`hey.el`)
 **Initial scope:** read-only mail browsing only
+**Repository:** <https://github.com/codingquark/hey.el>
+**License:** MIT
 
 This document is the durable context and decision record for building an
 Emacs-native interface on top of the official `hey` CLI. It exists so the work
@@ -879,13 +881,11 @@ Human decisions are required for:
 - unresolved interaction and visual-design choices;
 - any live mailbox or seen-state experiment;
 - expansion of the read allowlist or any write behavior;
-- repository hosting, licensing, supported Emacs floor, release tags, and
-  MELPA submission.
+- the supported Emacs floor, release tags, and MELPA submission.
 
-Track these explicitly in `PROJECT.md`. Local, unpublished implementation may
-use provisional version and compatibility metadata, but it must not create a
-public remote, release tag, license grant, or MELPA submission before those
-decisions are recorded.
+Track these explicitly in `PROJECT.md`. Development builds may use provisional
+version and compatibility metadata, but the project must not create a release
+tag or MELPA submission before those decisions are recorded.
 
 ### Milestone 0 — repository bootstrap
 
@@ -1194,8 +1194,7 @@ build tree:
 6. run the required startup smoke test:
 
 ```sh
-/Applications/Emacs.app/Contents/MacOS/Emacs \
-  --batch --init-directory=. --load init.el \
+emacs --batch --init-directory=. --load init.el \
   --eval '(message "startup ok")'
 ```
 

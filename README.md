@@ -5,8 +5,8 @@ built as a focused mail reader: browse boxes and bundles, search, inspect
 threads, and navigate labels or collections without exposing mailbox mutation
 commands.
 
-The project is under active local development and is not published yet.
-Repository hosting and licensing are still explicit human decisions.
+The project is under active development at
+<https://github.com/codingquark/hey.el>. It is not released to MELPA yet.
 
 ## Requirements
 
@@ -96,8 +96,12 @@ repository's scenario-driven fake executable; a missing fake is a hard failure,
 never a fallback to an installed `hey` program.
 
 The package target creates a deterministic multi-file tar archive in `dist/`.
-Only `hey.el`, `hey-cli.el`, `hey-model.el`, and `hey-pkg.el` enter that
-artifact.
+Only `hey.el`, `hey-cli.el`, `hey-model.el`, `hey-pkg.el`, and `LICENSE` enter
+that artifact.
 
 See `docs/read-only-plan.md` for the architecture, scope, security properties,
 and milestone gates.
+
+## License
+
+`hey.el` is available under the MIT License. See `LICENSE`.

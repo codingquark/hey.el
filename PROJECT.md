@@ -1,6 +1,6 @@
 # hey.el project tracker
 
-**Status:** locally integrated; awaiting human already-seen validation; unpublished
+**Status:** public development; awaiting human already-seen validation
 **Target:** read-only HEY mail reader for Emacs
 **CLI compatibility baseline:** HEY CLI 1.4.0
 **Minimum Emacs:** provisionally 28.2 (the exact oldest CI target)
@@ -39,13 +39,14 @@
 
 ## Human gates
 
-- [ ] Choose license and repository hosting/URL.
+- [x] Use the MIT License and `https://github.com/codingquark/hey.el`.
 - [x] Approve the fake-backed list/thread interaction prototype before local
       config integration or any real HEY CLI invocation.
 - [x] Authorize authenticated testing against already-seen mail.
 - [ ] Perform authenticated testing against already-seen mail.
 - [ ] Separately approve any unseen-thread test.
-- [ ] Approve public remote creation, release tag, and MELPA submission.
+- [x] Approve public remote creation.
+- [ ] Approve a release tag and MELPA submission.
 
 ## Milestones
 
@@ -74,21 +75,23 @@ refinement, and publication decisions.
 ## Acceptance evidence
 
 - Parent full gate, local pinned dependency cache, rerun after the bundle
-  navigation fix:
-  `make EMACS=/Applications/Emacs.app/Contents/MacOS/Emacs check` — 75/75 ERT,
+  navigation fix under the local Emacs 31.1 development build:
+  `make check` — 75/75 ERT,
   strict byte compilation, checkdoc/package-lint, read-only audit, package, and
   fresh install all passed.
 - Parent clean offline gate used a fresh ELPA directory plus the two documented
   checksum-pinned archive overrides — the same 74/74 and all build stages
   passed without dependency network access.
 - The post-fix package artifact has SHA-256
-  `734c9b883801992bb1dca5229c5eef15a47fb662c3d8da8c0ba5c4b99f2b5df7`.
+  `d3e8e8dacc23f90bf915fb16a7355abb7b7357d78491527c77ca23e870ad1941`.
 - The user approved the fake-backed list, bundle, and thread interaction on
   2026-09-03 and authorized proceeding to an already-seen-mail validation.
 - The downstream literate Emacs configuration loads the development checkout,
   binds `C-c e` to `hey`, and passes its required batch startup smoke test.
-- The archive contains exactly `hey.el`, `hey-cli.el`, `hey-model.el`, and
-  `hey-pkg.el`.
+- Public hosting is approved at `https://github.com/codingquark/hey.el` under
+  the MIT License; release tagging and MELPA submission remain gated.
+- The archive contains exactly `hey.el`, `hey-cli.el`, `hey-model.el`,
+  `hey-pkg.el`, and `LICENSE`.
 - Independent security review confirmed the current builders expose no mailbox
   mutation route and that prior cleanup, process-orphan, path, fake-boundary,
   and audit-bypass findings were remediated.

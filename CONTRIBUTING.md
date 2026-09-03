@@ -34,6 +34,5 @@ directory as `MARKDOWN_MODE_DIR`.  Describe the user-visible result and the
 checks you ran.  UI changes also need the relevant interactive exercise, but
 authenticated testing remains a separately approved human gate.
 
-Do not create a public remote, tag, release, license grant, or MELPA submission
-without explicit approval.  The current absence of package URL and license
-metadata is intentional while those human decisions remain open.
+The public repository and MIT license are approved. Do not create a release
+tag or submit the package to MELPA without separate explicit approval.

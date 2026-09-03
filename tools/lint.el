@@ -2,8 +2,7 @@
 
 ;;; Commentary:
 
-;; Run strict documentation and package metadata linting.  The package URL
-;; check alone is deferred until the repository-hosting human gate is resolved.
+;; Run strict documentation and package metadata linting.
 
 ;;; Code:
 
@@ -24,19 +23,17 @@
 
 (let ((failed nil)
       (main-file (hey-build-path "hey.el")))
-  (message "package-lint URL check deferred pending the hosting human gate")
-  (cl-letf (((symbol-function 'package-lint--check-url-header) #'ignore))
-    (dolist (file (hey-build-library-files))
-      (with-temp-buffer
-        (insert-file-contents (hey-build-path file))
-        (setq buffer-file-name (hey-build-path file))
-        (emacs-lisp-mode)
-        (let ((package-lint-main-file main-file))
-          (dolist (diagnostic (package-lint-buffer))
-            (setq failed t)
-            (pcase-let ((`(,line ,column ,type ,message) diagnostic))
-              (message "%s:%d:%d: %s: %s"
-                       file line column type message)))))))
+  (dolist (file (hey-build-library-files))
+    (with-temp-buffer
+      (insert-file-contents (hey-build-path file))
+      (setq buffer-file-name (hey-build-path file))
+      (emacs-lisp-mode)
+      (let ((package-lint-main-file main-file))
+        (dolist (diagnostic (package-lint-buffer))
+          (setq failed t)
+          (pcase-let ((`(,line ,column ,type ,message) diagnostic))
+            (message "%s:%d:%d: %s: %s"
+                     file line column type message))))))
   (when failed
     (error "package-lint reported diagnostics")))
 
