@@ -10,7 +10,7 @@ Repository hosting and licensing are still explicit human decisions.
 
 ## Requirements
 
-- Emacs 28.1 or newer;
+- Emacs 28.2 or newer (provisional until the release gate);
 - `markdown-mode` 2.8 or newer;
 - the official HEY CLI, with version 1.4.0 as the initial compatibility
   baseline.
@@ -32,7 +32,23 @@ entry command:
 ```
 
 Run `M-x hey` to open the configured account's Imbox.  The package installs no
-global keybindings.
+global keybindings.  Startup requires HEY CLI 1.4.0 or newer and presents a
+buffer-local error when authentication, account selection, or the version
+preflight fails.
+
+## Synthetic prototype review
+
+After `make bootstrap`, launch the complete asynchronous reader without a HEY
+installation, credentials, mailbox data, subprocess, or network access:
+
+```sh
+emacs -Q -L test/tmp/elpa/markdown-mode-2.8 -L . \
+  -l test/hey-demo.el -f hey-demo
+```
+
+Useful keys are `RET`/`o` to open, `n`/`p` to move, `g` to refresh, `M` to load
+more, `B` for boxes, `a` for accounts, `L`/`C` for labels/collections, `/` for
+search, `b`/`y` for validated HEY URLs, `?` for mode help, and `q` to return.
 
 A clean built-package installation is exercised by `make install-check`; it is
 separate from this convenient checkout workflow.
@@ -47,8 +63,12 @@ available.
 
 The package adds no body cache and does not persist search text.  The CLI can
 still refresh or migrate its own credentials, create an installation ID, and
-update its HTTP revalidation cache.  Those CLI-owned operational side effects
-are independent of mailbox mutation.
+update its HTTP revalidation cache.  HEY CLI 1.4.0 also records its last-run
+version and may refresh CLI-owned copies of its agent `SKILL.md` after a
+successful command when the CLI version changes.  Ordinary CLI startup may
+also remove its own stale self-upgrade sidecar files and lock beside the CLI
+executable.  Those CLI-owned operational side effects are independent of
+mailbox mutation.
 
 ## Development
 
@@ -58,13 +78,17 @@ The complete local gate is:
 make check
 ```
 
-`make bootstrap` installs the pinned `markdown-mode` 2.8 dependency and
-`package-lint` into an isolated directory under `test/tmp`.  To use an existing
-2.8 checkout or installation instead, provide its directory:
+`make bootstrap` installs checksum-pinned `markdown-mode` 2.8 and
+`package-lint` 0.26 artifacts into an isolated directory under `test/tmp`.
+To use an existing 2.8 checkout or installation instead, provide its directory:
 
 ```sh
 make MARKDOWN_MODE_DIR=/path/to/markdown-mode-2.8 check
 ```
+
+For an offline clean bootstrap, set `MARKDOWN_MODE_ARCHIVE` and
+`PACKAGE_LINT_ARCHIVE` to the exact archives named in `tools/bootstrap.el`;
+their pinned SHA-256 digests are still enforced.
 
 Individual targets are `test`, `compile`, `lint`, `package`, and
 `install-check`.  Every automated test binds `hey-executable` to the

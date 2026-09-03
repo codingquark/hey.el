@@ -15,6 +15,10 @@
 (defconst hey-build-install-markdown-version '(2 8)
   "Expected markdown-mode dependency version for install checks.")
 
+(defconst hey-build-install-markdown-sha256
+  "74220b9337e064a185123dfa1f9e307ded19159aa42917d7c568b77807664ba2"
+  "Expected digest of the markdown-mode 2.8 install artifact.")
+
 (defun hey-build-install-local-markdown (directory)
   "Install markdown-mode.el from DIRECTORY into the current package dir."
   (let ((source (expand-file-name "markdown-mode.el" directory)))
@@ -23,10 +27,19 @@
     (package-install-file source)))
 
 (defun hey-build-install-cached-markdown ()
-  "Install the pinned cached markdown-mode tar into the current package dir."
-  (let ((source (hey-build-path "test/tmp/downloads/markdown-mode-2.8.tar")))
+  "Install the verified pinned markdown-mode tar into the current package dir."
+  (let* ((override (getenv "MARKDOWN_MODE_ARCHIVE"))
+         (source
+          (if (and override (not (string-empty-p override)))
+              (expand-file-name override)
+            (hey-build-path "test/tmp/downloads/markdown-mode-2.8.tar"))))
+    (when (file-remote-p source)
+      (error "MARKDOWN_MODE_ARCHIVE must name a local archive"))
     (unless (file-readable-p source)
       (error "Pinned markdown-mode tar is absent; run make bootstrap"))
+    (unless (equal (hey-build-file-sha256 source)
+                   hey-build-install-markdown-sha256)
+      (error "Pinned markdown-mode tar failed its SHA-256 check"))
     (package-install-file source)))
 
 (let* ((temporary-root (hey-build-path "test/tmp"))

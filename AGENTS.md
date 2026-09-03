@@ -44,7 +44,7 @@ Development and CI tests must not resolve or execute the user's installed
 
 Emacs Lisp uses lexical binding, two-space indentation, lower-case hyphenated
 symbols, and the `hey-` prefix. Public functions and variables need docstrings.
-Keep package dependencies explicit and support Emacs 28.1 or newer unless a
+Keep package dependencies explicit and support Emacs 28.2 or newer unless a
 reviewed implementation need raises the floor.
 
 ## Git and release policy
@@ -52,4 +52,3 @@ reviewed implementation need raises the floor.
 Use short imperative commit subjects and keep commits logically scoped. Do not
 configure a remote, push, tag, publish, submit to MELPA, or add a legal license
 grant without explicit user approval.
-

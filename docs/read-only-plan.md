@@ -62,8 +62,8 @@ The initial compatibility baseline is HEY CLI 1.4.0, release commit
 commit `db24d024a42fa389728a152db925d705245c4fed`; its intervening changes from
 the release are documentation-only.
 
-The package supports Emacs 28.1 or newer initially because its markdown-mode
-2.8 dependency already requires Emacs 28.1. CI should exercise Emacs 28.2 and
+The package provisionally supports Emacs 28.2 or newer because 28.2 is the
+exact oldest CI target and markdown-mode 2.8 already supports it. CI exercises 28.2 and
 the current stable release, Emacs 30.2. Machine-specific binaries, checkout paths,
 and private research provenance belong only in the ignored local project
 ledger.
@@ -127,9 +127,12 @@ strict read-only phase because the TUI itself exposes mutation commands.
 
 1. **Read-only by construction.** Read-only means no HEY mailbox or
    application-state mutation. The CLI may still refresh or migrate its own
-   credentials, create an install ID, and update its ETag cache. Do not add a
-   writable capability flag or a generic interactive command runner. Only read
-   endpoint builders exist.
+   credentials, create an install ID, update its ETag cache, record its
+   last-run version, and refresh CLI-owned copies of its agent skill when the
+   CLI version changes. Ordinary startup may also remove stale CLI-owned
+   self-upgrade staging files and its upgrade lock. Do not add a writable
+   capability flag or a generic interactive command runner. Only read endpoint
+   builders exist.
 2. **One representation per layer.** CLI JSON is normalized once. Views never
    inspect raw JSON keys.
 3. **Pure core, effectful edge.** Command construction, normalization, and row
@@ -143,9 +146,11 @@ strict read-only phase because the TUI itself exposes mutation commands.
 6. **No shell strings.** Runtime commands are executable-plus-argv lists.
 7. **Privacy by default.** The Emacs package adds no body cache or file
    persistence and avoids verbose logging and accidental message/search history.
-   HEY CLI 1.4.0 independently keeps an ETag revalidation cache under
-   `~/.cache/hey-cli/http`; the package must document that CLI-owned persistence
-   rather than claiming mail is never cached on disk.
+   HEY CLI 1.4.0 independently keeps an ETag revalidation cache under the
+   platform cache directory. It may also write a last-run-version sentinel and
+   refresh installed agent-skill files that the CLI can prove it owns. The
+   package must document this CLI-owned persistence rather than claiming the
+   overall stack never writes to disk.
 8. **One display funnel and one refresh funnel.** Window policy and refresh
    lifecycle are centralized instead of being reimplemented per command.
 9. **Emacs-native, not web-layout mimicry.** Use buffers, minibuffer completion,
