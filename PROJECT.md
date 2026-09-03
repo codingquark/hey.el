@@ -38,9 +38,10 @@
 - Render valid posting-list timestamps in local time as `Today HH:MM`,
   `Yesterday HH:MM`, or `YYYY-MM-DD`, preserving sanitized malformed text and
   blank missing values while leaving thread timestamps unchanged.
-- Give subjects the available responsive width and omit an all-empty
-  memberships column until a loaded row contains a label or collection at a
-  wide or medium breakpoint; omit memberships in narrower layouts.
+- Split wide-layout flexible width three-to-two between Subject and Summary,
+  truncate both with complete help text, and omit an all-empty memberships
+  column until a loaded row contains a label or collection; continue to
+  prioritize subjects in narrower layouts.
 - Do not add date grouping or new package-branded colors.
 - Open with `RET` in the same window and `o` in another window.
 - Use explicit `M` for load more; resize never fetches data.
@@ -78,16 +79,19 @@
       the approved scanability packet covers current-row highlighting,
       humanized dates, and subject-first responsive columns.
 - [ ] M7: dogfood and user-approved publication. Package construction, clean
-      install verification, and publication approval are complete; upstream
-      submission remains to be accepted by MELPA.
+      install verification, publication approval, and the v0.1.0 tag are
+      complete. MELPA submission is gated until the public repository is one
+      month old on 2026-10-03, then remains subject to MELPA review.
 
 ## Active work packets
 
 The M6 scanability packet approved from the Modus/Elfeed comparison is complete
-and passes the full local gate. Publication of v0.1.0 and a MELPA recipe is
-approved. Remaining work includes human-performed authenticated
-already-seen-mail validation, further evidence-driven dogfood refinement, and
-MELPA review.
+and passes the full local gate. v0.1.0 is tagged and the exact MELPA recipe is
+validated. Do not open the MELPA pull request before 2026-10-03, when the
+repository satisfies MELPA's one-month public-maintenance checklist item.
+Remaining work includes human-performed authenticated already-seen-mail
+validation, further evidence-driven dogfood refinement, and MELPA submission
+and review.
 
 ## Acceptance evidence
 
@@ -101,11 +105,25 @@ MELPA review.
   passed without dependency network access.
 - The current package artifact has SHA-256
   `d14a9ff8f9ad17accd0bdcd812ba439f5ddcfd78697bfe21dee63bc07a36054a`.
+- A fresh clone of release commit `32e2816` passed `make check`: 89/89 ERT,
+  strict byte compilation, Checkdoc/package-lint, read-only audit,
+  deterministic packaging, and fresh installation. The artifact digest matched
+  the primary checkout.
+- GitHub Actions passed on both the release commit push and the v0.1.0 tag push.
+- The exact recipe `(hey :fetcher github :repo "codingquark/hey.el" :files
+  (:defaults "LICENSE"))` built successfully through MELPA's snapshots and
+  releases channels. Both generated archives installed cleanly; the releases
+  channel selected v0.1.0.
+- MELPA's current pull-request template requires one month of maintenance in a
+  public repository. This repository's history starts on 2026-09-03, so the
+  recipe pull request is truthfully eligible on 2026-10-03.
 - The user approved the fake-backed list, bundle, and thread interaction on
   2026-09-03 and authorized proceeding to an already-seen-mail validation.
 - The user approved theme-owned current-row highlighting, humanized dates, and
   subject-first column allocation after comparing the HEY and Elfeed views;
   date grouping and new branded colors remain intentionally excluded.
+- The user approved bounded three-to-two Subject/Summary allocation after
+  wide-screen dogfood showed that either unbounded field could dominate a row.
 - The downstream literate Emacs configuration loads the development checkout,
   binds `C-c e` to `hey`, and passes its required batch startup smoke test.
 - Public hosting is approved at `https://github.com/codingquark/hey.el` under

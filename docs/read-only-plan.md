@@ -592,18 +592,20 @@ Rules:
 - a bundled posting without `topic_id` is shown distinctly and opens its
   read-only `bundle view` child list; external URL handoff remains available
   when the posting supplies a valid application URL;
-- full sender/subject values remain available through row help/details when
-  visually truncated; `/` performs server search rather than pretending local
-  isearch can inspect text that was not inserted;
+- full sender, subject, and summary values remain available through row
+  help/details when visually truncated; `/` performs server search rather than
+  pretending local isearch can inspect text that was not inserted;
 - render posting `folders` as compact labels in a subdued face, with collection
   membership visually distinct rather than presented as another label;
 - reserve trailing space for labels, compact overflow as `Receipts, Travel +2`,
   and expose the complete memberships through row details or `help-echo`;
-- let the subject consume the remaining width at every breakpoint; when all
-  currently loaded normalized rows have no labels or collections, omit the
-  memberships column and reassign its width to the subject, restoring the
-  column at wide and medium breakpoints when a later loaded row has membership
-  data; narrow and minimal layouts omit memberships to preserve subject width;
+- in the wide layout, split the flexible width three-to-two between subject and
+  summary and visually truncate both with their complete values in help text;
+  when all currently loaded normalized rows have no labels or collections,
+  omit the memberships column and share its width between those two columns,
+  restoring the column when a later loaded row has membership data; medium,
+  narrow, and minimal layouts continue to give their remaining width to the
+  subject, with narrow and minimal layouts omitting memberships;
 - when memberships exist, they take display priority over summary: wide layouts
   add summary, narrower layouts remove it first, and only extremely narrow
   layouts may omit the compact membership column;
@@ -611,7 +613,7 @@ Rules:
   unavailable label and collection data empty rather than guessing or issuing
   N+1 requests;
 - fixed-width breakpoints continue to select which columns appear, while the
-  subject consumes the remaining width inside the selected layout;
+  selected layout budgets all available width without horizontal takeover;
 - choose the minimum width among visible windows showing the buffer and never
   issue a network request for resize;
 - use `tabulated-list-use-header-line` nil so `tabulated-list` inserts its column
@@ -1092,8 +1094,8 @@ search, label, and collection navigation without cross-source state leakage.
 
 Add only refinements supported by prototype or dogfood evidence:
 
-- responsive layout tuning, including subject-first width allocation and
-  omission of an all-empty memberships column;
+- responsive layout tuning, including bounded subject/summary allocation in
+  the wide layout and omission of an all-empty memberships column;
 - theme-owned current-row highlighting with a public opt-out;
 - humanized list timestamps without date grouping;
 - thread folding and origin-list next/previous navigation;
@@ -1127,6 +1129,8 @@ Before tagging the first release:
   privacy, CLI-owned caching, troubleshooting, and the read-only boundary;
 - update the changelog and tag a coherent first version;
 - test the proposed MELPA recipe locally before submission;
+- satisfy MELPA's current public-maintenance waiting period before opening the
+  recipe pull request, and never mark its checklist item complete early;
 - use versioned release tags so MELPA Stable can follow stable releases when
   appropriate.
 
@@ -1190,9 +1194,11 @@ design and safety review rather than another item in this delivery plan.
 - bundle rows expand without substituting posting IDs for topic IDs;
 - posting labels and collections render distinctly, compact predictably, expose
   complete memberships, and cause no per-row enrichment requests;
-- the subject receives available width, the memberships column disappears only
-  while every loaded row lacks memberships, and pagination can restore it
-  without a transport request beyond the requested page load;
+- wide subject and summary cells split flexible width three-to-two, truncate
+  with complete help text, and keep the configured table within the window;
+  the memberships column disappears only while every loaded row lacks
+  memberships, and pagination can restore it without a transport request
+  beyond the requested page load;
 - list mode uses theme-owned buffer-local `hl-line-mode` by default and honors
   the public opt-out without changing global highlight state;
 - valid list dates cover local today, calendar-day yesterday (including
