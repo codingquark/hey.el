@@ -1,0 +1,84 @@
+#!/bin/sh
+
+# Scenario-driven fake for process tests.  It never reads HEY configuration,
+# credentials, caches, or the network.
+
+set -eu
+
+scenario=${HEY_EMACS_TEST_SCENARIO:-success}
+record=${HEY_EMACS_TEST_RECORD:-}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+fixture_dir=$script_dir/../fixtures/hey
+
+if [ -n "$record" ]; then
+  {
+    printf 'cwd=%s\n' "$PWD"
+    printf 'argc=%s\n' "$#"
+    for argument do
+      printf 'arg=%s\n' "$argument"
+    done
+    printf 'HEY_NONINTERACTIVE=%s\n' "${HEY_NONINTERACTIVE-unset}"
+    printf 'HEY_NO_KEYRING=%s\n' "${HEY_NO_KEYRING-unset}"
+    if [ "${HEY_TOKEN+x}" = x ]; then printf 'HEY_TOKEN=set\n'; else printf 'HEY_TOKEN=unset\n'; fi
+    if [ "${HEY_BASE_URL+x}" = x ]; then printf 'HEY_BASE_URL=set\n'; else printf 'HEY_BASE_URL=unset\n'; fi
+    if [ "${HEY_ACCOUNT_ID+x}" = x ]; then printf 'HEY_ACCOUNT_ID=set\n'; else printf 'HEY_ACCOUNT_ID=unset\n'; fi
+    if [ "${HEY_DEBUG+x}" = x ]; then printf 'HEY_DEBUG=set\n'; else printf 'HEY_DEBUG=unset\n'; fi
+    if [ "${HEY_THEME+x}" = x ]; then printf 'HEY_THEME=set\n'; else printf 'HEY_THEME=unset\n'; fi
+    if [ "${HEY_CABLE_URL+x}" = x ]; then printf 'HEY_CABLE_URL=set\n'; else printf 'HEY_CABLE_URL=unset\n'; fi
+    if [ "${HEY_SETUP_AGENT+x}" = x ]; then printf 'HEY_SETUP_AGENT=set\n'; else printf 'HEY_SETUP_AGENT=unset\n'; fi
+  } >"$record"
+fi
+
+case $scenario in
+  success)
+    cat "$fixture_dir/transport-success.json"
+    ;;
+  chunked)
+    printf '%s' '{"ok":true,"data":[{"id":"synthetic'
+    sleep 0.05
+    printf '%s\n' '-posting-17","name":"Café ☕"}]}'
+    ;;
+  malformed)
+    printf '%s\n' '{"ok":true,"data":['
+    ;;
+  stderr-success)
+    printf '%s\n' 'synthetic warning' >&2
+    cat "$fixture_dir/transport-success.json"
+    ;;
+  stdout-on-error)
+    printf '%s\n' 'not an error envelope'
+    cat "$fixture_dir/transport-error.json" >&2
+    exit 7
+    ;;
+  delay)
+    sleep 2
+    cat "$fixture_dir/transport-success.json"
+    ;;
+  signal)
+    kill -TERM $$
+    ;;
+  large)
+    printf '%s' '{"ok":true,"data":"'
+    index=0
+    while [ "$index" -lt 256 ]; do
+      printf '%s' '0123456789abcdef'
+      index=$((index + 1))
+    done
+    printf '%s\n' '"}'
+    ;;
+  error-[1-8])
+    cat "$fixture_dir/transport-error.json" >&2
+    exit "${scenario#error-}"
+    ;;
+  error-unknown)
+    cat "$fixture_dir/transport-error.json" >&2
+    exit 9
+    ;;
+  empty-error)
+    exit 7
+    ;;
+  *)
+    printf '%s\n' '{"ok":false,"error":"Unknown fake scenario","code":"usage"}' >&2
+    exit 1
+    ;;
+esac
