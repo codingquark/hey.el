@@ -1,6 +1,6 @@
 # hey.el project tracker
 
-**Status:** automated prototype complete; awaiting human UX gate; unpublished
+**Status:** locally integrated; awaiting human already-seen validation; unpublished
 **Target:** read-only HEY mail reader for Emacs
 **CLI compatibility baseline:** HEY CLI 1.4.0
 **Minimum Emacs:** provisionally 28.2 (the exact oldest CI target)
@@ -23,7 +23,7 @@
 - CLI 1.4.0 is the minimum runtime version; startup fails visibly on older or
   malformed version responses.
 
-## Prototype choices awaiting human approval
+## Approved prototype choices
 
 - Show summary text only in the wide list layout; progressively remove it at
   narrower breakpoints.
@@ -40,9 +40,10 @@
 ## Human gates
 
 - [ ] Choose license and repository hosting/URL.
-- [ ] Approve the fake-backed list/thread interaction prototype before local
+- [x] Approve the fake-backed list/thread interaction prototype before local
       config integration or any real HEY CLI invocation.
-- [ ] Approve and perform authenticated testing against already-seen mail.
+- [x] Authorize authenticated testing against already-seen mail.
+- [ ] Perform authenticated testing against already-seen mail.
 - [ ] Separately approve any unseen-thread test.
 - [ ] Approve public remote creation, release tag, and MELPA submission.
 
@@ -66,9 +67,9 @@
 
 ## Active work packets
 
-All implementation packets are complete. Remaining work is deliberately gated
-on human interaction review, authenticated already-seen-mail validation, and
-publication decisions.
+All implementation packets are complete. Remaining work is human-performed
+authenticated already-seen-mail validation, evidence-driven dogfood
+refinement, and publication decisions.
 
 ## Acceptance evidence
 
@@ -82,6 +83,10 @@ publication decisions.
   passed without dependency network access.
 - The post-fix package artifact has SHA-256
   `734c9b883801992bb1dca5229c5eef15a47fb662c3d8da8c0ba5c4b99f2b5df7`.
+- The user approved the fake-backed list, bundle, and thread interaction on
+  2026-09-03 and authorized proceeding to an already-seen-mail validation.
+- The downstream literate Emacs configuration loads the development checkout,
+  binds `C-c e` to `hey`, and passes its required batch startup smoke test.
 - The archive contains exactly `hey.el`, `hey-cli.el`, `hey-model.el`, and
   `hey-pkg.el`.
 - Independent security review confirmed the current builders expose no mailbox
