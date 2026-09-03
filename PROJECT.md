@@ -30,6 +30,18 @@
 - Show compact labels and collections with the complete values in help text.
 - Mark unseen rows with a leading dot and bold subject. A posting is seen iff
   the CLI's `seen` field is literal JSON `true`; every other value is unseen.
+- Follow the active Emacs theme through package-owned semantic faces that
+  inherit standard faces; ship no fixed palette, fonts, or branded selection
+  styling.
+- Enable theme-owned buffer-local `hl-line-mode` in HEY lists by default, with
+  `hey-highlight-current-row` as the public opt-out.
+- Render valid posting-list timestamps in local time as `Today HH:MM`,
+  `Yesterday HH:MM`, or `YYYY-MM-DD`, preserving sanitized malformed text and
+  blank missing values while leaving thread timestamps unchanged.
+- Give subjects the available responsive width and omit an all-empty
+  memberships column until a loaded row contains a label or collection at a
+  wide or medium breakpoint; omit memberships in narrower layouts.
+- Do not add date grouping or new package-branded colors.
 - Open with `RET` in the same window and `o` in another window.
 - Use explicit `M` for load more; resize never fetches data.
 - Use `n`/`p` for posting rows and thread-entry boundaries; keep `SPC`/`DEL`
@@ -62,30 +74,36 @@
       refresh, pagination, partial reads, URL handoff, and failure states. Live
       human validation remains open.
 - [x] M5 implementation: account switching, search, labels, and collections.
-- [ ] M6: evidence-backed refinement after human prototype review and dogfood.
+- [ ] M6: evidence-backed refinement after human prototype review and dogfood;
+      the approved scanability packet covers current-row highlighting,
+      humanized dates, and subject-first responsive columns.
 - [ ] M7: dogfood and user-approved publication. Package construction and clean
       install verification are complete.
 
 ## Active work packets
 
-All implementation packets are complete. Remaining work is human-performed
-authenticated already-seen-mail validation, evidence-driven dogfood
+The M6 scanability packet approved from the Modus/Elfeed comparison is complete
+and passes the full local gate. Remaining work includes human-performed
+authenticated already-seen-mail validation, further evidence-driven dogfood
 refinement, and publication decisions.
 
 ## Acceptance evidence
 
-- Parent full gate, local pinned dependency cache, rerun after the bundle
-  navigation fix under the local Emacs 31.1 development build:
-  `make check` — 75/75 ERT,
+- Parent full gate, local pinned dependency cache, rerun after the M6
+  scanability packet under the local Emacs 31.1 development build:
+  `make check` — 89/89 ERT,
   strict byte compilation, checkdoc/package-lint, read-only audit, package, and
   fresh install all passed.
 - Parent clean offline gate used a fresh ELPA directory plus the two documented
   checksum-pinned archive overrides — the same 74/74 and all build stages
   passed without dependency network access.
-- The post-fix package artifact has SHA-256
-  `d3e8e8dacc23f90bf915fb16a7355abb7b7357d78491527c77ca23e870ad1941`.
+- The current package artifact has SHA-256
+  `ce9a3618853e37d30cede2310e6a65e4750b00ddabba5f852adc1ad87df572f2`.
 - The user approved the fake-backed list, bundle, and thread interaction on
   2026-09-03 and authorized proceeding to an already-seen-mail validation.
+- The user approved theme-owned current-row highlighting, humanized dates, and
+  subject-first column allocation after comparing the HEY and Elfeed views;
+  date grouping and new branded colors remain intentionally excluded.
 - The downstream literate Emacs configuration loads the development checkout,
   binds `C-c e` to `hey`, and passes its required batch startup smoke test.
 - Public hosting is approved at `https://github.com/codingquark/hey.el` under

@@ -503,6 +503,34 @@ The package installs no global keybindings. It exposes the public entry command
 `hey` and public mode maps; the mode-local bindings below are conventional
 defaults that users may override.
 
+### Theme integration
+
+The reader follows the active Emacs theme rather than shipping a HEY-branded
+palette. It does not set fixed foregrounds, backgrounds, fonts, branded
+selection styling, or variable-pitch text. Standard `tabulated-list`,
+`header-line`, `hl-line`, Markdown, link, and mode-line faces remain owned by
+Emacs, the user's theme, and `markdown-mode`. `hey-list-mode` enables
+buffer-local `hl-line-mode` by default for a clear current row;
+`hey-highlight-current-row` is the public boolean opt-out and does not define
+or replace the selection face.
+
+Package-owned semantic faces provide stable customization hooks for unseen
+subjects, labels, collections, thread-subject emphasis, metadata labels,
+ordinary status text, partial-result warnings, and operation failures. Each
+inherits a standard Emacs face and specifies no color directly. Model-owned
+row formatters define and apply row faces; the UI library defines faces used by
+buffer-state rendering and thread overlays.
+
+The public face names are `hey-unseen-face`, `hey-label-face`,
+`hey-collection-face`, `hey-thread-subject-face`,
+`hey-metadata-label-face`, `hey-status-face`, `hey-warning-face`, and
+`hey-error-face`.
+
+Meaning never depends on color alone: unseen mail retains its marker and
+weight, collections retain the `◇` marker, and warnings and failures retain
+explicit text. Changing themes or customizing a face updates existing buffers
+through symbolic face properties and requires no data refresh.
+
 ## UX proposal
 
 ### 1. Summary/list buffer
@@ -536,18 +564,18 @@ Example status header and wide layout:
 
 ```text
 HEY · Personal · Imbox · 37 shown · more available · updated 11:42
-  Date        Sender             Subject              Labels           Summary
-● Today 10:31 Alice Example      Design review moved  Work, Planning   Friday works…
-  Yesterday   Basecamp           Receipt for HEY      Receipts         Your receipt…
+  Date             Sender             Subject              Labels           Summary
+● Today 10:31      Alice Example      Design review moved  Work, Planning   Friday works…
+  Yesterday 07:56  Basecamp           Receipt for HEY      Receipts         Your receipt…
 ```
 
 Example narrow layout:
 
 ```text
 HEY · Personal · Imbox · 37 shown · more available
-  Sender              Subject                 Labels       Date
-● Alice Example       Design review moved     Work +1      Today
-  Basecamp            Receipt for HEY         Receipts     Yesterday
+  Sender              Subject                              Date
+● Alice Example       Design review moved                  Today 10:31
+  Basecamp            Receipt for HEY                      Yesterday 07:56
 ```
 
 Rules:
@@ -555,6 +583,11 @@ Rules:
 - unseen is expressed primarily by weight plus a restrained marker, not a
   theme-dependent bright color; only a literal JSON `true` `seen` value
   suppresses that unseen presentation;
+- valid posting-list timestamps render in the user's local time as
+  `Today HH:MM`, `Yesterday HH:MM`, or `YYYY-MM-DD` for older dates; missing
+  values remain blank, an unparseable value falls back to its sanitized source
+  text, and thread timestamps remain unchanged; the UI supplies one explicit
+  clock snapshot to the pure model formatter for each complete list render;
 - one logical posting per row;
 - a bundled posting without `topic_id` is shown distinctly and opens its
   read-only `bundle view` child list; external URL handoff remains available
@@ -566,17 +599,21 @@ Rules:
   membership visually distinct rather than presented as another label;
 - reserve trailing space for labels, compact overflow as `Receipts, Travel +2`,
   and expose the complete memberships through row details or `help-echo`;
-- labels take display priority over summary: wide layouts add summary, narrower
-  layouts remove it first, and only extremely narrow layouts may omit the
-  compact label column;
+- let the subject consume the remaining width at every breakpoint; when all
+  currently loaded normalized rows have no labels or collections, omit the
+  memberships column and reassign its width to the subject, restoring the
+  column at wide and medium breakpoints when a later loaded row has membership
+  data; narrow and minimal layouts omit memberships to preserve subject width;
+- when memberships exist, they take display priority over summary: wide layouts
+  add summary, narrower layouts remove it first, and only extremely narrow
+  layouts may omit the compact membership column;
 - never fetch per-thread metadata merely to enrich a row; search rows leave
   unavailable label and collection data empty rather than guessing or issuing
   N+1 requests;
-- fixed-width breakpoints ship first; responsive widths remain a reversible
-  Milestone 6 experiment;
-- if responsive widths are enabled, choose the minimum width among visible
-  windows showing the buffer, use breakpoint hysteresis, debounce changes, and
-  never issue a network request for resize;
+- fixed-width breakpoints continue to select which columns appear, while the
+  subject consumes the remaining width inside the selected layout;
+- choose the minimum width among visible windows showing the buffer and never
+  issue a network request for resize;
 - use `tabulated-list-use-header-line` nil so `tabulated-list` inserts its column
   headings as the first in-buffer line while preserving identity-aware
   `(tabulated-list-print t)` redraw;
@@ -587,6 +624,9 @@ Rules:
   commands skip every non-row status or heading line;
 - local column sorting stays disabled because sorting one accumulated prefix of
   a server-paginated mailbox would be misleading;
+- do not group rows by date or introduce new branded colors; humanized dates
+  and theme-owned current-row highlighting provide the approved scanability
+  improvements without changing navigation or pagination semantics;
 - use the mode line only as a conventional fallback; do not repurpose
   `tab-line-format`, which belongs to the user's buffer/tab workflow;
 - empty, loading, exhausted, partial, and failed states must be designed rather
@@ -1051,7 +1091,10 @@ search, label, and collection navigation without cross-source state leakage.
 
 Add only refinements supported by prototype or dogfood evidence:
 
-- responsive layout tuning;
+- responsive layout tuning, including subject-first width allocation and
+  omission of an all-empty memberships column;
+- theme-owned current-row highlighting with a public opt-out;
+- humanized list timestamps without date grouping;
 - thread folding and origin-list next/previous navigation;
 - complete keyboard and accessibility review;
 - customization options that solve observed needs;
@@ -1146,6 +1189,14 @@ design and safety review rather than another item in this delivery plan.
 - bundle rows expand without substituting posting IDs for topic IDs;
 - posting labels and collections render distinctly, compact predictably, expose
   complete memberships, and cause no per-row enrichment requests;
+- the subject receives available width, the memberships column disappears only
+  while every loaded row lacks memberships, and pagination can restore it
+  without a transport request beyond the requested page load;
+- list mode uses theme-owned buffer-local `hl-line-mode` by default and honors
+  the public opt-out without changing global highlight state;
+- valid list dates cover local today, calendar-day yesterday (including
+  month/year boundaries), and older-date forms, while explicit offsets,
+  missing values, and malformed timestamp fallbacks remain stable;
 - sticky header state reflects account, source, loading/staleness, continuation,
   count, and successful refresh without exposing private search text;
 - initial point and `n`/`p` skip the in-buffer table heading and status lines;

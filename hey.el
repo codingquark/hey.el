@@ -19,11 +19,37 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'hl-line)
 (require 'subr-x)
 (require 'tabulated-list)
 (require 'markdown-mode)
 (require 'hey-model)
 (require 'hey-cli)
+
+(defface hey-thread-subject-face
+  '((t :inherit bold))
+  "Face for the subject value in a HEY thread preamble."
+  :group 'hey)
+
+(defface hey-metadata-label-face
+  '((t :inherit shadow))
+  "Face for field labels in a HEY thread preamble."
+  :group 'hey)
+
+(defface hey-status-face
+  '((t :inherit shadow))
+  "Face for non-fatal HEY state and orientation annotations."
+  :group 'hey)
+
+(defface hey-warning-face
+  '((t :inherit warning))
+  "Face for partial or malformed HEY results."
+  :group 'hey)
+
+(defface hey-error-face
+  '((t :inherit error))
+  "Face for HEY operation failures."
+  :group 'hey)
 
 (defcustom hey-account nil
   "Linked account ID used by `hey'.
@@ -37,6 +63,13 @@ that session and never change this option or the CLI configuration."
 (defcustom hey-initial-box "imbox"
   "HEY box command identifier opened by `hey'."
   :type 'string
+  :group 'hey)
+
+(defcustom hey-highlight-current-row t
+  "Whether `hey-list-mode' highlights the current row.
+
+The highlight is buffer-local and uses the theme-owned `hl-line' face."
+  :type 'boolean
   :group 'hey)
 
 (defconst hey--minimum-cli-version "1.4.0"
@@ -93,6 +126,8 @@ that session and never change this option or the CLI configuration."
 (defvar-local hey--error nil)
 (defvar-local hey--warnings nil)
 (defvar-local hey--layout nil)
+(defvar-local hey--columns nil)
+(defvar-local hey--columns-key nil)
 (defvar-local hey--thread nil)
 (defvar-local hey--thread-key nil)
 (defvar-local hey--origin nil)
@@ -101,24 +136,24 @@ that session and never change this option or the CLI configuration."
 (defvar hey--main-buffer nil
   "Live primary HEY list buffer, regardless of its state-derived name.")
 
-(defconst hey--list-formats
-  '((wide . [("Date" 20 nil)
-             ("Sender" 20 nil)
-             ("Subject" 30 nil)
-             ("Labels / collections" 28 nil)
-             ("Summary" 0 nil)])
-    (medium . [("Date" 18 nil)
-               ("Sender" 20 nil)
-               ("Subject" 30 nil)
-               ("Labels / collections" 0 nil)])
-    (narrow . [("Sender" 18 nil)
-               ("Subject" 28 nil)
-               ("Labels / collections" 16 nil)
-               ("Date" 0 nil)])
-    (minimal . [("Sender" 18 nil)
-                ("Subject" 30 nil)
-                ("Date" 0 nil)]))
-  "Fixed tabulated-list formats at each responsive breakpoint.")
+(defconst hey--list-layouts
+  '((wide . ((date "Date" 16)
+             (sender "Sender" 18)
+             (subject "Subject" 30)
+             (memberships "Labels / collections" 20)
+             (summary "Summary" 20)))
+    (medium . ((date "Date" 16)
+               (sender "Sender" 18)
+               (subject "Subject" 30)
+               (memberships "Labels / collections" 16)))
+    (narrow . ((sender "Sender" 14)
+               (subject "Subject" 12)
+               (memberships "Labels / collections" 16)
+               (date "Date" 16)))
+    (minimal . ((sender "Sender" 14)
+                (subject "Subject" 1)
+                (date "Date" 16))))
+  "Column fields, titles, and preferred widths for each list layout.")
 
 (defun hey--call (operation &rest arguments)
   "Call named CLI OPERATION with ARGUMENTS.
@@ -197,53 +232,120 @@ primitive."
         ((>= width 58) 'narrow)
         (t 'minimal)))
 
+(defun hey--memberships-present-p ()
+  "Return non-nil when any cached posting has a membership."
+  (cl-some (lambda (posting)
+             (or (hey-posting-labels posting)
+                 (hey-posting-collections posting)))
+           hey--records))
+
+(defun hey--columns-for-layout (layout)
+  "Return the visible column specifications for LAYOUT.
+
+The memberships column is omitted when it would be empty for every cached
+posting, and at the narrow breakpoint where Subject takes priority."
+  (let ((columns (alist-get layout hey--list-layouts)))
+    (if (and (not (eq layout 'narrow))
+             (hey--memberships-present-p))
+        columns
+      (cl-remove 'memberships columns :key #'car))))
+
+(defun hey--column-format (layout columns width)
+  "Return a tabulated-list format for LAYOUT's COLUMNS at WIDTH.
+
+Subject receives the available width after reserving the other columns."
+  (let* ((layout-columns (alist-get layout hey--list-layouts))
+         (subject-base (nth 2 (assq 'subject layout-columns)))
+         (non-subject-width
+          (cl-loop for (field _title preferred) in columns
+                   unless (eq field 'subject)
+                   sum preferred))
+         (inter-column-padding (max 0 (1- (length columns))))
+         (available (- width tabulated-list-padding inter-column-padding
+                       non-subject-width))
+         (subject-width (max subject-base available)))
+    (vconcat
+     (mapcar (lambda (column)
+               (pcase-let ((`(,field ,title ,preferred) column))
+                 (list title (if (eq field 'subject)
+                                 subject-width
+                               preferred)
+                       nil)))
+             columns))))
+
 (defun hey--configure-columns (&optional width)
   "Configure list columns for WIDTH and return non-nil when they changed."
-  (let ((layout (hey--layout-for-width
-                 (or width (hey--minimum-window-width)))))
-    (unless (eq layout hey--layout)
+  (let* ((width (or width (hey--minimum-window-width)))
+         (layout (hey--layout-for-width width))
+         (columns (hey--columns-for-layout layout))
+         (format (hey--column-format layout columns width))
+         (key (list layout (mapcar #'car columns) format)))
+    (unless (equal key hey--columns-key)
       (setq hey--layout layout
-            tabulated-list-format (alist-get layout hey--list-formats))
+            hey--columns columns
+            hey--columns-key key
+            tabulated-list-format format)
       (tabulated-list-init-header)
       t)))
 
-(defun hey--row-vector (posting)
-  "Return the display vector for normalized POSTING."
-  (let ((row (hey-model-posting-row posting hey--layout)))
+(defun hey--row-vector (posting now)
+  "Return the display vector for normalized POSTING at time NOW."
+  (let* ((layout-columns (alist-get hey--layout hey--list-layouts))
+         (row (hey-model-posting-row posting hey--layout))
+         (subject-index (cl-position 'subject layout-columns :key #'car))
+         (date-index (cl-position 'date layout-columns :key #'car)))
+    (aset row date-index
+          (hey-model-format-posting-timestamp
+           (aref row date-index) now))
     (when (eq (hey-posting-kind posting) 'bundle)
-      (let ((index (pcase hey--layout
-                     ((or 'wide 'medium) 2)
-                     ((or 'narrow 'minimal) 1))))
-        (aset row index
-              (concat (aref row index)
-                      (propertize "  ◇ Bundle" 'face 'shadow)))))
-    row))
+      (aset row subject-index
+            (concat (aref row subject-index)
+                    (propertize "  ◇ Bundle" 'face 'hey-status-face))))
+    (vconcat
+     (cl-loop for column in layout-columns
+              for value across row
+              when (assq (car column) hey--columns)
+              collect value))))
 
 (defun hey--tabulated-entries ()
   "Return tabulated entries from buffer-local normalized records."
-  (mapcar (lambda (posting)
-            (list (hey-posting-key posting) (hey--row-vector posting)))
-          hey--records))
+  (let ((now (current-time)))
+    (mapcar (lambda (posting)
+              (list (hey-posting-key posting) (hey--row-vector posting now)))
+            hey--records)))
 
 (defun hey--state-message ()
   "Return an actionable non-row message for the current list state."
   (cond
-   ((and hey--loading (null hey--records)) "Loading HEY mail…")
+   ((and hey--loading (null hey--records))
+    (propertize "Loading HEY mail…" 'face 'hey-status-face))
    ((and hey--error (null hey--records))
-    (format "HEY could not load this source: %s\n\nPress g to retry."
-            (hey-error-message hey--error)))
+    (propertize
+     (format "HEY could not load this source: %s\n\nPress g to retry."
+             (hey-error-message hey--error))
+     'face 'hey-error-face))
    ((and hey--warnings (null hey--records))
-    "HEY returned no usable rows. Some malformed results were skipped.\n\nPress g to retry.")
+    (propertize
+     "HEY returned no usable rows. Some malformed results were skipped.\n\nPress g to retry."
+     'face 'hey-warning-face))
    ((null hey--records)
-    (if (and (hey-source-p hey--source) (hey-source-exhausted hey--source))
-        "No mail in this source."
-      "No mail returned."))
+    (propertize
+     (if (and (hey-source-p hey--source) (hey-source-exhausted hey--source))
+         "No mail in this source."
+       "No mail returned.")
+     'face 'hey-status-face))
    ((and hey--error hey--stale)
-    (format "\nShowing stale results. Refresh failed: %s\nPress g to retry."
-            (hey-error-message hey--error)))
+    (propertize
+     (format "\nShowing stale results. Refresh failed: %s\nPress g to retry."
+             (hey-error-message hey--error))
+     'face 'hey-error-face))
    ((and hey--warnings (hey-source-exhausted hey--source))
-    "\nSome malformed results were skipped; no more results are available.")
-   (hey--warnings "\nSome malformed results were skipped.")
+    (propertize
+     "\nSome malformed results were skipped; no more results are available."
+     'face 'hey-warning-face))
+   (hey--warnings
+    (propertize "\nSome malformed results were skipped."
+                'face 'hey-warning-face))
    (t nil)))
 
 (defun hey--first-row ()
@@ -266,7 +368,7 @@ When WIDTH is non-nil, use it for responsive column selection."
     (when-let* ((message (hey--state-message)))
       (goto-char (point-max))
       (unless (bolp) (insert "\n"))
-      (insert "\n" (propertize message 'face 'shadow) "\n"))
+      (insert "\n" message "\n"))
     (cond
      ((and identity (equal identity (tabulated-list-get-id))) nil)
      (identity
@@ -294,9 +396,14 @@ When WIDTH is non-nil, use it for responsive column selection."
                             (not (hey-source-exhausted hey--source)))
                        "more available")
                       (t "up to date")))
-         (state (if hey--warnings
-                    (concat base-state ", partial")
-                  base-state))
+         (state (propertize
+                 (if hey--warnings
+                     (concat base-state ", partial")
+                   base-state)
+                 'face (cond
+                        (hey--error 'hey-error-face)
+                        (hey--warnings 'hey-warning-face)
+                        (t 'hey-status-face))))
          (updated (and hey--last-refreshed
                        (format-time-string "%H:%M" hey--last-refreshed)))
          (layout (or hey--layout
@@ -914,7 +1021,8 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                      (setq hey--loading nil hey--error error hey--request nil)
                      (hey--render-thread-state
                       (format "HEY could not load this thread: %s"
-                              (hey-error-message error))))))))))
+                              (hey-error-message error))
+                      'hey-error-face))))))))
     (hey-display-buffer buffer intent)))
 
 (defun hey-open ()
@@ -950,11 +1058,13 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
       (progn (kill-new url) (message "Copied validated HEY URL"))
     (user-error "No validated HEY application URL is available here")))
 
-(defun hey--render-thread-state (message)
-  "Render thread loading or failure MESSAGE."
+(defun hey--render-thread-state (message &optional face)
+  "Render thread loading or failure MESSAGE using FACE.
+
+FACE defaults to `hey-status-face'."
   (let ((inhibit-read-only t))
     (erase-buffer)
-    (insert (propertize message 'face 'shadow) "\n")
+    (insert (propertize message 'face (or face 'hey-status-face)) "\n")
     (goto-char (point-min))))
 
 (defun hey--thread-header ()
@@ -974,28 +1084,35 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                       (hey-thread-source-title hey--thread) count))
                (t (list "HEY" (hey-thread-source-title hey--thread) count)))))
         (string-join parts " · "))
-    (if hey--loading "HEY · loading" "HEY · error")))
+    (if hey--loading
+        (concat "HEY · " (propertize "loading" 'face 'hey-status-face))
+      (concat "HEY · " (propertize "error" 'face 'hey-error-face)))))
 
 (defun hey--render-thread ()
   "Render the normalized buffer-local HEY thread."
-  (let ((inhibit-read-only t))
+  (let ((inhibit-read-only t)
+        warning-start)
     (erase-buffer)
     (insert (hey-model-thread-markdown hey--thread))
     (when hey--warnings
       (goto-char (point-max))
-      (insert (propertize
-               "\n> Some malformed thread entries were skipped.\n"
-               'face 'shadow)))
+      (setq warning-start (point))
+      (insert "\n> Some malformed thread entries were skipped.\n"))
     (font-lock-ensure)
     (save-excursion
+      (when warning-start
+        (add-face-text-property warning-start (point-max)
+                                'hey-warning-face t))
       (goto-char (point-min))
       (while (re-search-forward
               "^\\(Subject:\\|Senders:\\|Messages shown:\\|Account:\\|Opened from:\\|Labels:\\|Collections:\\|Notice:\\)"
               nil t)
-        (add-face-text-property (match-beginning 1) (match-end 1) 'shadow t))
+        (add-face-text-property (match-beginning 1) (match-end 1)
+                                'hey-metadata-label-face t))
       (goto-char (point-min))
       (when (re-search-forward "^Subject:[[:space:]]*\\(.*\\)$" nil t)
-        (add-face-text-property (match-beginning 1) (match-end 1) 'bold t)))
+        (add-face-text-property (match-beginning 1) (match-end 1)
+                                'hey-thread-subject-face t)))
     (goto-char (point-min))))
 
 (defun hey--entry-starts ()
@@ -1049,6 +1166,8 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
               hey--error nil
               hey--warnings nil
               hey--layout nil
+              hey--columns nil
+              hey--columns-key nil
               hey--origin nil
               hey--operation-overrides nil
               tabulated-list-padding 2
@@ -1059,6 +1178,7 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
               header-line-format '(:eval (hey--status-header))
               truncate-lines t)
   (buffer-disable-undo)
+  (hl-line-mode (if hey-highlight-current-row 1 -1))
   (hey--configure-columns)
   (tabulated-list-init-header))
 

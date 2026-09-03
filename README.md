@@ -56,6 +56,35 @@ search, `b`/`y` for validated HEY URLs, `?` for mode help, and `q` to return.
 A clean built-package installation is exercised by `make install-check`; it is
 separate from this convenient checkout workflow.
 
+## Appearance
+
+`hey.el` uses the active Emacs theme and does not impose HEY brand colors,
+backgrounds, fonts, or branded selection styling.  Its semantic faces inherit
+standard Emacs faces, while message bodies retain `markdown-mode`'s normal
+appearance.  `hey-list-mode` enables buffer-local `hl-line-mode` by default so
+the current row uses the theme's standard `hl-line` face; customize
+`hey-highlight-current-row` to nil to opt out.  Unseen state, collections,
+warnings, and errors also have textual or symbolic cues, so color is never
+their only distinction.
+
+Posting-list dates are rendered in the user's local time as `Today HH:MM`,
+`Yesterday HH:MM`, or `YYYY-MM-DD` for older valid timestamps.  Missing
+timestamps stay blank and malformed timestamps retain their sanitized source
+text; thread timestamps are unchanged.  Subject width consumes the space
+available in each responsive layout.  When none of the currently loaded rows
+has a label or collection, the memberships column is omitted and its space is
+given to the subject; at wide and medium breakpoints it returns when a loaded
+row has membership data.  Narrow layouts omit memberships to preserve usable
+subject width.  The list does not add date grouping or package-branded colors.
+
+Run `M-x customize-group RET hey` to adjust the package options and faces,
+including the current-row highlight.  Theme authors can customize
+`hey-unseen-face`, `hey-label-face`,
+`hey-collection-face`, `hey-thread-subject-face`,
+`hey-metadata-label-face`, `hey-status-face`, `hey-warning-face`, and
+`hey-error-face` without replacing the list, header-line, or Markdown faces
+owned by their respective modes.
+
 ## Read-only and privacy boundary
 
 The Emacs package has a closed allowlist of read operations.  It does not

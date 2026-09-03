@@ -14,4 +14,12 @@ All notable changes to this project will be documented in this file.
 - Publish project metadata and package licensing under the MIT License.
 - Keep strict Checkdoc failures compatible with every supported Emacs target.
 - Update the pinned checkout action to its Node 24-compatible release.
+- Add theme-native semantic faces without imposing a package color palette.
 - Treat a posting as seen only when the CLI's `seen` field is literal true.
+- Highlight the current list row with the theme's `hl-line` face by default,
+  with `hey-highlight-current-row` as the public opt-out.
+- Humanize posting-list dates in local time as today, yesterday, or an ISO
+  calendar date while retaining safe fallbacks for missing and malformed
+  timestamps.
+- Allocate responsive list width to subjects and omit the memberships column
+  when every loaded row has no memberships.

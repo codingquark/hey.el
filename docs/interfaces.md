@@ -47,6 +47,7 @@ Required public pure functions:
 - `hey-model-normalize-thread ENVELOPE CONTEXT`
 - `hey-model-envelope-notice ENVELOPE`
 - `hey-model-format-memberships MEMBERSHIPS MAX-WIDTH`
+- `hey-model-format-posting-timestamp TIMESTAMP NOW`
 - `hey-model-posting-row POSTING LAYOUT`
 - `hey-model-thread-markdown THREAD`
 
@@ -59,6 +60,9 @@ Required public pure functions:
 
 The memberships cell lists labels first and collections with distinct
 presentation; its `help-echo` exposes the complete untruncated memberships.
+`hey-model-format-posting-timestamp` requires an explicit `NOW` value so the
+model remains pure; the UI supplies one clock snapshot for a complete list
+render.
 
 `CONTEXT` for thread normalization is a plist containing only normalized
 origin data: `:account-id`, `:account-name`, `:topic-id`, `:subject`,

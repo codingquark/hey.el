@@ -362,16 +362,62 @@
     (should (= (length minimal) 3))
     (should (equal (substring-no-properties (aref wide 2))
                    "● Quarterly planX"))
+    (should (eq (get-text-property 0 'face (aref wide 2))
+                'hey-unseen-face))
     (should (equal (aref narrow 0) "Alice Example"))
     (should (equal (aref narrow 3) "2026-09-03T09:30:00Z"))
     (should (string-match-p "◇ Launch"
                             (substring-no-properties (aref wide 3))))
+    (should (eq (get-text-property 0 'face (aref wide 3))
+                'hey-label-face))
+    (let ((collection-start (string-match "◇" (aref wide 3))))
+      (should collection-start)
+      (should (eq (get-text-property collection-start 'face (aref wide 3))
+                  'hey-collection-face)))
     (should (string-match-p "Labels: Planning, Receipts, Travel"
                             (get-text-property 0 'help-echo (aref wide 3))))
     (should (<= (string-width (aref wide 3)) 28))
     (should (<= (string-width (aref medium 3)) 24))
     (should (<= (string-width (aref narrow 2)) 16))
+    (let ((copy (copy-hey-posting posting)))
+      (setf (hey-posting-seen copy) 'seen)
+      (should-not
+       (get-text-property 0 'face (aref (hey-model-posting-row copy 'wide)
+                                         2))))
     (should-error (hey-model-posting-row posting 'unknown-layout))))
+
+(ert-deftest hey-model-formats-same-day-posting-timestamp ()
+  (let ((now (encode-time '(0 0 18 3 9 2026 nil -1 nil))))
+    (should (equal (hey-model-format-posting-timestamp
+                    "2026-09-03T09:30:00" now)
+                   "Today 09:30"))))
+
+(ert-deftest hey-model-formats-yesterday-across-year-boundary ()
+  (let ((now (encode-time '(0 0 12 1 1 2026 nil -1 nil))))
+    (should (equal (hey-model-format-posting-timestamp
+                    "2025-12-31T23:45:00" now)
+                   "Yesterday 23:45"))))
+
+(ert-deftest hey-model-formats-older-posting-timestamp-as-iso-date ()
+  (let ((now (encode-time '(0 0 12 3 9 2026 nil -1 nil))))
+    (should (equal (hey-model-format-posting-timestamp
+                    "2026-08-28T17:05:00" now)
+                   "2026-08-28"))))
+
+(ert-deftest hey-model-honors-timezone-in-posting-timestamp ()
+  (let* ((timestamp "2026-09-03T09:30:00+05:30")
+         (instant (date-to-time timestamp)))
+    (should (equal (hey-model-format-posting-timestamp timestamp instant)
+                   (format-time-string "Today %H:%M" instant)))))
+
+(ert-deftest hey-model-falls-back-for-malformed-posting-timestamp ()
+  (should (equal (hey-model-format-posting-timestamp
+                  "  not-a-date\nwith-noise  "
+                  (encode-time '(0 0 12 3 9 2026 nil -1 nil)))
+                 "not-a-date with-noise"))
+  (should (equal (hey-model-format-posting-timestamp
+                  "2026-09-03T09:30:00" nil)
+                 "2026-09-03T09:30:00")))
 
 (ert-deftest hey-model-treats-only-json-true-as-seen ()
   (should (eq (hey-model--seen-state t) 'seen))

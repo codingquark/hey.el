@@ -32,7 +32,7 @@
     ("name" . ,subject) ("seen" . hey-json-false)
     ("creator" ("name" . "Synthetic Sender"))
     ("summary" . "Synthetic summary")
-    ("created_at" . "2026-09-03 10:00")
+    ("created_at" . "2026-09-03T10:00:00")
     ("folders" (("id" . 11) ("name" . "Planning")))
     ("collections" (("id" . 21) ("name" . "Launch")))
     ("app_url" . ,(and topic (format "https://app.hey.com/topics/%s" topic)))))
@@ -101,11 +101,54 @@
     (should-not (lookup-key hey-thread-mode-map [mouse-2]))
     (should (eq (key-binding (kbd "RET")) #'hey-follow-link))))
 
+(ert-deftest hey-ui-list-highlights-current-row-with-theme-face ()
+  (let ((hey-highlight-current-row t))
+    (hey-test-with-list
+      (should (local-variable-p 'hl-line-mode))
+      (should hl-line-mode)
+      (should (eq hl-line-face 'hl-line))))
+  (let ((hey-highlight-current-row nil))
+    (hey-test-with-list
+      (should (local-variable-p 'hl-line-mode))
+      (should-not hl-line-mode))))
+
+(ert-deftest hey-ui-defines-theme-native-semantic-faces ()
+  (dolist (face '(hey-unseen-face
+                  hey-label-face
+                  hey-collection-face
+                  hey-thread-subject-face
+                  hey-metadata-label-face
+                  hey-status-face
+                  hey-warning-face
+                  hey-error-face))
+    (should (facep face))
+    (should (eq (face-attribute face :foreground nil nil) 'unspecified))
+    (should (eq (face-attribute face :background nil nil) 'unspecified)))
+  (should (eq (face-attribute 'hey-unseen-face :inherit) 'bold))
+  (should (eq (face-attribute 'hey-label-face :inherit) 'shadow))
+  (should (eq (face-attribute 'hey-collection-face :inherit)
+              'font-lock-constant-face))
+  (should (eq (face-attribute 'hey-warning-face :inherit) 'warning))
+  (should (eq (face-attribute 'hey-error-face :inherit) 'error)))
+
+(ert-deftest hey-ui-thread-states-use-semantic-faces ()
+  (with-temp-buffer
+    (hey-thread-mode)
+    (hey--render-thread-state "Loading HEY thread…")
+    (should (eq (get-text-property (point-min) 'face) 'hey-status-face))
+    (hey--render-thread-state "HEY could not load this thread: Offline"
+                              'hey-error-face)
+    (should (eq (get-text-property (point-min) 'face) 'hey-error-face))))
+
 (ert-deftest hey-ui-renders-loading-empty-stale-and-error-states ()
   (hey-test-with-list
     (setq hey--loading t)
     (hey--render-list)
     (should (string-match-p "Loading HEY mail" (buffer-string)))
+    (goto-char (point-min))
+    (search-forward "Loading HEY mail")
+    (should (eq (get-text-property (match-beginning 0) 'face)
+                'hey-status-face))
     (setq hey--loading nil hey--records nil)
     (setf (hey-source-exhausted hey--source) t)
     (hey--render-list)
@@ -120,7 +163,15 @@
           hey--error (make-hey-error :category 'network :message "Offline"))
     (hey--render-list)
     (should (string-match-p "Showing stale results" (buffer-string)))
-    (should (string-match-p "stale" (hey--status-header)))))
+    (goto-char (point-min))
+    (search-forward "Showing stale results")
+    (should (eq (get-text-property (match-beginning 0) 'face)
+                'hey-error-face))
+    (let* ((header (hey--status-header))
+           (stale-start (string-match "stale" header)))
+      (should stale-start)
+      (should (eq (get-text-property stale-start 'face header)
+                  'hey-error-face)))))
 
 (ert-deftest hey-ui-malformed-empty-response-is-not-presented-as-empty-mail ()
   (hey-test-with-list
@@ -146,11 +197,109 @@
             `((hey-cli-box-view . ,(lambda (&rest _args) (cl-incf calls)))))
       (hey--resize-buffer 130)
       (should (eq hey--layout 'wide))
+      (should (= (length (cadar (hey--tabulated-entries)))
+                 (length tabulated-list-format)))
       (hey--resize-buffer 70)
       (should (eq hey--layout 'narrow))
+      (should (= (length (cadar (hey--tabulated-entries)))
+                 (length tabulated-list-format)))
       (hey--resize-buffer 40)
       (should (eq hey--layout 'minimal))
+      (should (= (length (cadar (hey--tabulated-entries)))
+                 (length tabulated-list-format)))
       (should (= calls 0)))))
+
+(defun hey-test--column-width (name)
+  "Return the configured width for column NAME."
+  (cadr (cl-find name tabulated-list-format :key #'car :test #'equal)))
+
+(defun hey-test--configured-table-width ()
+  "Return the total configured table width including padding."
+  (+ tabulated-list-padding
+     (max 0 (1- (length tabulated-list-format)))
+     (cl-loop for column across tabulated-list-format sum (cadr column))))
+
+(ert-deftest hey-ui-narrow-layout-fits-the-window-width ()
+  (hey-test-with-list
+    (dolist (width '(58 40))
+      (hey--resize-buffer width)
+      (should (= (hey-test--configured-table-width) width)))))
+
+(ert-deftest hey-ui-empty-memberships-give-their-width-to-subject ()
+  (hey-test-with-list
+    (let ((raw (copy-tree
+                (hey-test--posting 501 901
+                                   "A subject that can stay visible"))))
+      (setf (alist-get "folders" raw nil nil #'equal) nil
+            (alist-get "collections" raw nil nil #'equal) nil)
+      (setq hey--records
+            (plist-get (hey-model-normalize-postings
+                        (hey-test--postings-envelope (list raw))
+                        hey--source)
+                       :value))
+      (hey--render-list nil 130)
+      (should-not (cl-find "Labels / collections" tabulated-list-format
+                           :key #'car :test #'equal))
+      (should (equal (mapcar #'car (append tabulated-list-format nil))
+                     '("Date" "Sender" "Subject" "Summary")))
+      (should (= (length (cadar (hey--tabulated-entries))) 4))
+      (should (= (hey-test--column-width "Subject") 71)))))
+
+(ert-deftest hey-ui-populated-memberships-retain-their-column ()
+  (hey-test-with-list
+    (setq hey--records
+          (plist-get (hey-model-normalize-postings
+                      (hey-test--postings-envelope
+                       (list (hey-test--posting 501 901 "Memberships")))
+                      hey--source)
+                     :value))
+    (hey--render-list nil 130)
+    (should (equal (mapcar #'car (append tabulated-list-format nil))
+                   '("Date" "Sender" "Subject"
+                     "Labels / collections" "Summary")))
+    (should (= (length (cadar (hey--tabulated-entries))) 5))
+    (should (= (hey-test--column-width "Subject") 50))))
+
+(ert-deftest hey-ui-bundle-annotation-survives-column-projection ()
+  (hey-test-with-list
+    (let ((raw (copy-tree (hey-test--posting 502 nil "Bundle" "bundle"))))
+      (setf (alist-get "folders" raw nil nil #'equal) nil
+            (alist-get "collections" raw nil nil #'equal) nil)
+      (setq hey--records
+            (plist-get (hey-model-normalize-postings
+                        (hey-test--postings-envelope (list raw))
+                        hey--source)
+                       :value))
+      (hey--render-list nil 130)
+      (let* ((entry (car (hey--tabulated-entries)))
+             (row (cadr entry))
+             (subject-index
+              (cl-position "Subject" tabulated-list-format
+                           :key #'car :test #'equal)))
+        (should (= (length row) (length tabulated-list-format)))
+        (should (string-match-p "◇ Bundle"
+                                (aref row subject-index)))))))
+
+(ert-deftest hey-ui-formats-all-list-dates-at-one-current-time ()
+  (hey-test-with-list
+    (setq hey--records
+          (plist-get (hey-model-normalize-postings
+                      (hey-test--postings-envelope
+                       (list (hey-test--posting 501 901 "First")
+                             (hey-test--posting 502 902 "Second")))
+                      hey--source)
+                     :value))
+    (let ((calls 0)
+          (now (encode-time 0 0 12 3 9 2026)))
+      (cl-letf (((symbol-function 'current-time)
+                 (lambda () (cl-incf calls) now)))
+        (let ((entries (hey--tabulated-entries)))
+          (should (= calls 1))
+          (let ((date-index
+                 (cl-position "Date" tabulated-list-format
+                              :key #'car :test #'equal)))
+            (should (equal (aref (cadar entries) date-index)
+                           "Today 10:00"))))))))
 
 (ert-deftest hey-ui-refresh-and-revert-share-the-same-funnel ()
   (hey-test-with-list
@@ -442,6 +591,14 @@
       (should (derived-mode-p 'hey-thread-mode))
       (should (string-match-p "Messages shown:[[:space:]]+2" (buffer-string)))
       (should (string-match-p "Notice:[[:space:]]+Partial read" (buffer-string)))
+      (goto-char (point-min))
+      (re-search-forward "^Subject:[[:space:]]+\\(.+\\)$")
+      (should (memq 'hey-metadata-label-face
+                    (ensure-list
+                     (get-text-property (match-beginning 0) 'face))))
+      (should (memq 'hey-thread-subject-face
+                    (ensure-list
+                     (get-text-property (match-beginning 1) 'face))))
       (let ((starts (hey--entry-starts)))
         (should (= (length starts) 2))
         (goto-char (point-min))
@@ -466,7 +623,12 @@
            :value)
           hey--warnings '("Skipped malformed entry"))
     (hey--render-thread)
-    (should (string-match-p "malformed thread entries" (buffer-string)))))
+    (should (string-match-p "malformed thread entries" (buffer-string)))
+    (goto-char (point-min))
+    (search-forward "malformed thread entries")
+    (should (memq 'hey-warning-face
+                  (ensure-list
+                   (get-text-property (match-beginning 0) 'face))))))
 
 (ert-deftest hey-ui-thread-reuse-rejects-an-out-of-order-callback ()
   (save-window-excursion

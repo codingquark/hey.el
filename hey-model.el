@@ -17,8 +17,30 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'calendar)
+(require 'iso8601)
 (require 'subr-x)
 (require 'url-parse)
+
+(defgroup hey nil
+  "Read HEY mail without mailbox mutations."
+  :group 'applications
+  :prefix "hey-")
+
+(defface hey-unseen-face
+  '((t :inherit bold))
+  "Face for the subjects of explicitly unseen HEY postings."
+  :group 'hey)
+
+(defface hey-label-face
+  '((t :inherit shadow))
+  "Face for HEY label memberships."
+  :group 'hey)
+
+(defface hey-collection-face
+  '((t :inherit font-lock-constant-face))
+  "Face for HEY collection memberships."
+  :group 'hey)
 
 (defconst hey-model--official-origin "https://app.hey.com"
   "The only application origin accepted by the v1 reader.")
@@ -712,15 +734,15 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
           (cond
            ((and (not (string-empty-p labels))
                  (not (string-empty-p collections)))
-            (concat (propertize labels 'face 'font-lock-comment-face)
+            (concat (propertize labels 'face 'hey-label-face)
                     " · "
                     (propertize (concat "◇ " collections)
-                                'face 'font-lock-keyword-face)))
+                                'face 'hey-collection-face)))
            ((not (string-empty-p labels))
-            (propertize labels 'face 'font-lock-comment-face))
+            (propertize labels 'face 'hey-label-face))
            ((not (string-empty-p collections))
             (propertize (concat "◇ " collections)
-                        'face 'font-lock-keyword-face))
+                        'face 'hey-collection-face))
            (t "")))
          (full-labels (string-join
                        (hey-model--membership-names (hey-posting-labels posting))
@@ -740,6 +762,35 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
                   cell bounded nil nil "…")))
     (if (string-empty-p help) cell (propertize cell 'help-echo help))))
 
+(defun hey-model--local-date-number (time)
+  "Return the absolute local calendar date containing TIME."
+  (let ((decoded (decode-time time)))
+    (calendar-absolute-from-gregorian
+     (list (decoded-time-month decoded)
+           (decoded-time-day decoded)
+           (decoded-time-year decoded)))))
+
+(defun hey-model-format-posting-timestamp (timestamp now)
+  "Format posting TIMESTAMP relative to NOW in the local time zone.
+
+Return `Today HH:MM' or `Yesterday HH:MM' for the corresponding local
+calendar dates.  Return YYYY-MM-DD for any other parseable ISO 8601 timestamp.
+Malformed timestamps fall back to their sanitized original text."
+  (let ((clean (hey-model--clean-string timestamp)))
+    (if (null now)
+        clean
+      (condition-case nil
+          (let* ((time (encode-time (iso8601-parse clean)))
+                 (date-difference (- (hey-model--local-date-number now)
+                                     (hey-model--local-date-number time))))
+            (cond
+             ((zerop date-difference)
+              (format-time-string "Today %H:%M" time))
+             ((= date-difference 1)
+              (format-time-string "Yesterday %H:%M" time))
+             (t (format-time-string "%Y-%m-%d" time))))
+        (error clean)))))
+
 (defun hey-model-posting-row (posting layout)
   "Format POSTING as a vector for symbolic LAYOUT.
 
@@ -756,7 +807,7 @@ expose their complete values via `help-echo'."
   (let* ((subject (hey-posting-subject posting))
          (subject-cell
           (if (eq (hey-posting-seen posting) 'unseen)
-              (propertize (concat "● " subject) 'face 'bold)
+              (propertize (concat "● " subject) 'face 'hey-unseen-face)
             subject))
          (date (hey-posting-timestamp posting))
          (sender (hey-posting-contacts posting))
