@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "data": [
+    {
+      "topic_id": 77,
+      "subject": "Search result",
+      "updated_at": "2026-09-03T10:00:00Z",
+      "seen": false,
+      "folders": [{"id": 99, "name": "Must be ignored"}],
+      "messages": [
+        {
+          "id": 701,
+          "alternative_sender_name": "First Match",
+          "summary": "First matching excerpt",
+          "created_at": "2026-09-02T08:00:00Z",
+          "app_url": "https://app.hey.com/topics/77#entry-701"
+        },
+        {
+          "id": 702,
+          "creator": {"name": "Second Match"},
+          "summary": "Second matching excerpt",
+          "created_at": "2026-09-03T08:00:00Z"
+        }
+      ]
+    },
+    {
+      "id": 88,
+      "subject": "No topic identifier",
+      "messages": []
+    }
+  ],
+  "meta": {"page": 4, "pages_fetched": 1}
+}

@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "data": [
+    {"id": "all", "name": "All Accounts"},
+    {
+      "id": "101",
+      "name": "Personal\u001b[31m account\u001b[0m",
+      "email": "reader@example.invalid",
+      "future_field": "ignored"
+    },
+    {"name": "Missing identifier"}
+  ],
+  "breadcrumbs": [
+    {"action": "write", "command": "hey account use 101"}
+  ]
+}

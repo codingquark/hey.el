@@ -40,6 +40,16 @@ Required public pure functions:
 - `hey-model-posting-row POSTING LAYOUT`
 - `hey-model-thread-markdown THREAD`
 
+`LAYOUT` is one of four symbols with these exact vector shapes:
+
+- `wide`: `[date sender subject memberships summary]`
+- `medium`: `[date sender subject memberships]`
+- `narrow`: `[sender subject memberships date]`
+- `minimal`: `[sender subject date]`
+
+The memberships cell lists labels first and collections with distinct
+presentation; its `help-echo` exposes the complete untruncated memberships.
+
 `CONTEXT` for thread normalization is a plist containing only normalized
 origin data: `:account-id`, `:account-name`, `:topic-id`, `:subject`,
 `:source-title`, `:labels`, `:labels-known-p`, `:collections`, and
@@ -100,4 +110,3 @@ queries.
 
 The UI has one `hey--refresh` funnel and one `hey-display-buffer` funnel. It
 uses only normalized records and named CLI operations.
-

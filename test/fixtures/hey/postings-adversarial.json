@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "data": {
+    "id": 1,
+    "kind": "imbox",
+    "name": "Imbox",
+    "next_page": "cursor-2",
+    "signed_stream_name": "must-not-cross-model-boundary",
+    "postings": [
+      {
+        "id": 501,
+        "topic_id": 901,
+        "kind": "topic",
+        "name": "Quarterly\nplan\u202eX",
+        "seen": false,
+        "creator": {"name": "Alice\u001b[31m Example\u001b[0m"},
+        "summary": "First\u0007 line\r\nSecond line",
+        "created_at": "2026-09-03T09:30:00Z",
+        "folders": [
+          {"id": 11, "name": "Planning"},
+          {"id": 12, "name": "Receipts"},
+          {"id": 13, "name": "Travel"}
+        ],
+        "collections": [{"id": 21, "name": "Launch"}],
+        "app_url": "https://app.hey.com/topics/901",
+        "future_field": {"ignored": true}
+      },
+      {
+        "id": 502,
+        "kind": "bundle",
+        "name": "Build reports",
+        "seen": null,
+        "contacts": [{"name": "CI Bot"}],
+        "app_url": "https://evil.invalid/topics/502"
+      },
+      {
+        "topic_id": 903,
+        "name": "No posting identifier"
+      }
+    ]
+  },
+  "breadcrumbs": [{"command": "hey move 501 --to trash"}]
+}

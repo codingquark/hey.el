@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "data": [
+    {"id": 1, "kind": "imbox", "name": "Imbox"},
+    {"id": 2, "kind": "", "name": "Receipts\nArchive"},
+    {"kind": null, "name": "Missing identifier"}
+  ]
+}

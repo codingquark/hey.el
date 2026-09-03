@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "data": [
+    {
+      "id": 801,
+      "created_at": "2026-09-01 09:10",
+      "creator": {"name": "Mallory # forged\nSubject: fake"},
+      "body": "# Body heading\n\nBody text with [relative](/topics/77).",
+      "body_state": "hydrated",
+      "app_url": "https://app.hey.com/topics/77#entry-801"
+    },
+    {
+      "id": 802,
+      "created_at": "2026-09-02 10:31",
+      "creator": {"name": "Mallory # forged Subject: fake"},
+      "body": "",
+      "body_state": "over_limit",
+      "app_url": "https://evil.invalid/topics/77"
+    },
+    {
+      "created_at": "2026-09-03 11:00",
+      "body": "Must be omitted with the malformed entry"
+    }
+  ],
+  "notice": "Thread read only\nin part\u202e!",
+  "breadcrumbs": [{"command": "hey reply 77"}]
+}
