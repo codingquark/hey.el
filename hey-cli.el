@@ -248,22 +248,116 @@ Git worktrees and repository-local HEY configuration are both excluded."
       (setq current (unless (or found (equal current parent)) parent)))
     found))
 
+(defun hey-cli--working-directory-ancestors (directory)
+  "Return DIRECTORY and its ancestors, ordered from root to leaf."
+  (let ((current (file-name-as-directory (expand-file-name directory)))
+        ancestors
+        parent)
+    (while current
+      (push current ancestors)
+      (setq parent (file-name-directory (directory-file-name current)))
+      (setq current (unless (equal current parent) parent)))
+    ancestors))
+
+(defun hey-cli--verify-working-ancestor (directory)
+  "Reject DIRECTORY unless it is a trusted, non-writable local directory.
+
+Directories owned by the current user or root are trusted.  Group- or
+world-writable directories are rejected, except for root-owned sticky
+directories such as `/tmp'."
+  (when (or (file-remote-p directory) (file-symlink-p directory))
+    (error "HEY working directory has an unsafe symlink or remote ancestor"))
+  (let* ((attributes (file-attributes directory 'integer))
+         (owner (and attributes (file-attribute-user-id attributes)))
+         (modes (and attributes (file-modes directory)))
+         (current-owner (user-uid)))
+    (unless (and attributes
+                 (eq (file-attribute-type attributes) t)
+                 (integerp modes))
+      (error "HEY working directory ancestor is not a local directory"))
+    (unless (or (equal owner current-owner) (equal owner 0))
+      (error "HEY working directory has an untrusted owner"))
+    (unless (or (zerop (logand modes #o022))
+                (and (equal owner 0)
+                     (not (zerop (logand modes #o1000)))))
+      (error "HEY working directory has a writable shared ancestor"))))
+
+(defun hey-cli--verify-working-tree (directory)
+  "Verify every canonical ancestor of DIRECTORY."
+  (dolist (ancestor (hey-cli--working-directory-ancestors directory))
+    (hey-cli--verify-working-ancestor ancestor)))
+
+(defun hey-cli--working-directory-base (directory)
+  "Return canonical existing base and missing components for DIRECTORY.
+
+The result is a cons whose car is the nearest existing ancestor's truename
+and whose cdr lists the components that still need to be created."
+  (let ((probe (directory-file-name directory))
+        missing
+        parent)
+    (while (not (file-exists-p probe))
+      (when (file-symlink-p probe)
+        (error "HEY working directory contains a dangling symlink"))
+      (push (file-name-nondirectory probe) missing)
+      (setq parent (file-name-directory probe))
+      (when (or (null parent)
+                (equal (directory-file-name parent) probe))
+        (error "HEY working directory has no usable local ancestor"))
+      (setq probe (directory-file-name parent)))
+    (unless (file-directory-p probe)
+      (error "HEY working directory ancestor is not a directory"))
+    (cons (file-name-as-directory (file-truename probe)) missing)))
+
 (defun hey-cli--prepare-working-directory ()
   "Validate, create, and return the neutral HEY working directory."
   (unless (and (stringp hey-working-directory)
                (file-name-absolute-p hey-working-directory)
                (not (file-remote-p hey-working-directory)))
     (error "HEY working directory must be an absolute local path"))
-  (when (hey-cli--unsafe-working-ancestor hey-working-directory)
-    (error "HEY working directory has an unsafe repository ancestor"))
-  (make-directory hey-working-directory t)
-  (set-file-modes hey-working-directory #o700)
-  (let ((directory (file-name-as-directory
-                    (file-truename hey-working-directory))))
-    (when (or (file-remote-p directory)
-              (hey-cli--unsafe-working-ancestor directory))
-      (error "HEY working directory resolves to an unsafe location"))
-    directory))
+  (let ((expanded (file-name-as-directory
+                   (expand-file-name hey-working-directory))))
+    ;; Never chmod or otherwise follow a caller-supplied final symlink.
+    (when (file-symlink-p (directory-file-name expanded))
+      (error "HEY working directory must not be a symlink"))
+    (pcase-let* ((`(,base . ,missing)
+                  (hey-cli--working-directory-base expanded))
+                 (directory base))
+      ;; Resolve conventional, trusted system aliases (for example macOS
+      ;; /var) once, then operate only on the canonical path.  Security checks
+      ;; below prevent traversal through mutable shared or foreign-owned
+      ;; ancestors.
+      (hey-cli--verify-working-tree directory)
+      (dolist (component missing)
+        (setq directory
+              (file-name-as-directory (expand-file-name component directory)))
+        (when (file-symlink-p (directory-file-name directory))
+          (error "HEY working directory contains a symlink"))
+        (if (file-exists-p directory)
+            (hey-cli--verify-working-ancestor directory)
+          (make-directory directory)
+          (set-file-modes directory #o700)
+          (hey-cli--verify-working-ancestor directory)))
+      (setq directory (file-name-as-directory (file-truename directory)))
+      (when (or (file-remote-p directory)
+                (hey-cli--unsafe-working-ancestor directory))
+        (error "HEY working directory resolves to an unsafe location"))
+      (hey-cli--verify-working-tree directory)
+      (let* ((attributes (file-attributes directory 'integer))
+             (owner (and attributes (file-attribute-user-id attributes))))
+        (unless (equal owner (user-uid))
+          (error "HEY working directory must be owned by the current user")))
+      (set-file-modes directory #o700)
+      ;; Re-stat after chmod.  This both verifies the intended privacy mode and
+      ;; catches a replacement of the leaf during preparation.  Trusted,
+      ;; non-writable ancestors make a later replacement impractical for a
+      ;; different local user before `make-process' opens the directory.
+      (unless (and (not (file-symlink-p (directory-file-name directory)))
+                   (equal (file-attribute-user-id
+                           (file-attributes directory 'integer))
+                          (user-uid))
+                   (zerop (logand (file-modes directory) #o077)))
+        (error "HEY working directory changed during secure preparation"))
+      directory)))
 
 (defun hey-cli--resolve-executable ()
   "Return a validated absolute path to the HEY executable."
@@ -371,9 +465,10 @@ server data."
 
 (defun hey-cli--delete-request-buffers (request)
   "Delete REQUEST's private processes and capture buffers."
-  (let ((stderr-process (hey-cli--request-stderr-process request)))
-    (when (processp stderr-process)
-      (ignore-errors (delete-process stderr-process))))
+  (dolist (process (list (hey-cli--request-process request)
+                         (hey-cli--request-stderr-process request)))
+    (when (processp process)
+      (ignore-errors (delete-process process))))
   (dolist (buffer (list (hey-cli--request-stdout-buffer request)
                         (hey-cli--request-stderr-buffer request)))
     (when (buffer-live-p buffer)
@@ -399,17 +494,35 @@ CATEGORY and EXIT-STATUS are used only for redacted diagnostics."
     (hey-cli--log
      (hey-cli--request-operation request) exit-status category
      (- (float-time) (hey-cli--request-started-at request)) stderr-p)
-    (let ((owner (hey-cli--request-owner request))
-          (callback (if success
-                        (hey-cli--request-success request)
-                      (hey-cli--request-failure request))))
-      (when (and (buffer-live-p owner) (functionp callback))
-        (condition-case nil
-            (funcall callback value)
-          (error
-           (hey-cli--log (hey-cli--request-operation request) exit-status
-                         'callback-error 0 nil)))))
-    (hey-cli--delete-request-buffers request)))
+    (unwind-protect
+        (let ((owner (hey-cli--request-owner request))
+              (callback (if success
+                            (hey-cli--request-success request)
+                          (hey-cli--request-failure request))))
+          (when (and (buffer-live-p owner) (functionp callback))
+            (condition-case nil
+                (funcall callback value)
+              (error
+               (hey-cli--log (hey-cli--request-operation request) exit-status
+                             'callback-error 0 nil)))))
+      ;; Callback `quit', `throw', and other nonlocal exits must never retain
+      ;; raw stdout or stderr in the private capture buffers.
+      (hey-cli--delete-request-buffers request))))
+
+(defun hey-cli--abort-request-setup (request process stderr-process)
+  "Clean up REQUEST after setup aborts using PROCESS and STDERR-PROCESS."
+  ;; Mark completion before deleting either process: deletion can run the
+  ;; sentinel synchronously, and an incompletely installed request must not
+  ;; call application callbacks.
+  (setf (hey-cli--request-completed request) t)
+  (when (processp process)
+    (setf (hey-cli--request-process request) process))
+  (when (processp stderr-process)
+    (setf (hey-cli--request-stderr-process request) stderr-process))
+  (when (timerp (hey-cli--request-timer request))
+    (cancel-timer (hey-cli--request-timer request)))
+  (hey-cli--remove-kill-hook request)
+  (hey-cli--delete-request-buffers request))
 
 (defun hey-cli--capture (request buffer chunk)
   "Capture CHUNK for REQUEST in BUFFER without crossing the byte limit."
@@ -579,58 +692,62 @@ success envelope.  FAILURE receives a `hey-error'."
                          :operation operation
                          :started-at (float-time)
                          :bytes 0))
-               stderr-process process kill-hook)
-          (condition-case err
-              (let ((default-directory working-directory)
-                    (process-environment (hey-cli--sanitized-environment)))
-                (setq stderr-process
-                      (make-pipe-process
-                       :name (concat name "-stderr")
-                       :buffer nil
-                       :coding 'utf-8-unix
-                       :noquery t
-                       :filter (lambda (_process chunk)
-                                 (hey-cli--capture request stderr-buffer chunk))))
-                (setf (hey-cli--request-stderr-process request) stderr-process)
-                (setq process
-                      (make-process
-                       :name name
-                       :buffer nil
-                       :command (cons executable argv)
-                       :coding 'utf-8-unix
-                       :connection-type 'pipe
-                       :noquery t
-                       :stderr stderr-process
-                       :filter (lambda (_process chunk)
-                                 (hey-cli--capture request stdout-buffer chunk))
-                       :sentinel (lambda (finished-process event)
-                                   (hey-cli--sentinel request finished-process
-                                                      event))))
-                (setf (hey-cli--request-process request) process)
-                (setq kill-hook
-                      (lambda ()
-                        ;; A process sentinel can run before `kill-buffer'
-                        ;; finishes.  Clear the owner first so that completion
-                        ;; still cannot call into a dying buffer.
-                        (setf (hey-cli--request-owner request) nil)
-                        (hey-cli-cancel-request request)))
-                (setf (hey-cli--request-kill-hook request) kill-hook)
-                (with-current-buffer owner
-                  (add-hook 'kill-buffer-hook kill-hook nil t))
-                (setf (hey-cli--request-timer request)
-                      (run-at-time hey-timeout-seconds nil
-                                   #'hey-cli--timeout request))
-                request)
-            (error
-             (ignore-errors
-               (when (processp stderr-process) (delete-process stderr-process)))
-             (hey-cli--delete-request-buffers request)
-             (hey-cli--configuration-failure
-              operation owner failure
-              (if (eq (car-safe err) 'file-missing)
-                  "Configured HEY executable is unavailable."
-                "HEY process could not be started."))
-             nil)))
+               stderr-process process kill-hook setup-complete)
+          (unwind-protect
+              (condition-case err
+                  (let ((default-directory working-directory)
+                        (process-environment (hey-cli--sanitized-environment)))
+                    (setq stderr-process
+                          (make-pipe-process
+                           :name (concat name "-stderr")
+                           :buffer nil
+                           :coding 'utf-8-unix
+                           :noquery t
+                           :filter (lambda (_process chunk)
+                                     (hey-cli--capture request stderr-buffer chunk))))
+                    (setf (hey-cli--request-stderr-process request) stderr-process)
+                    (setq process
+                          (make-process
+                           :name name
+                           :buffer nil
+                           :command (cons executable argv)
+                           :coding 'utf-8-unix
+                           :connection-type 'pipe
+                           :noquery t
+                           :stderr stderr-process
+                           :filter (lambda (_process chunk)
+                                     (hey-cli--capture request stdout-buffer chunk))
+                           :sentinel (lambda (finished-process event)
+                                       (hey-cli--sentinel request finished-process
+                                                          event))))
+                    (setf (hey-cli--request-process request) process)
+                    (setq kill-hook
+                          (lambda ()
+                            ;; A process sentinel can run before `kill-buffer'
+                            ;; finishes.  Clear the owner first so that completion
+                            ;; still cannot call into a dying buffer.
+                            (setf (hey-cli--request-owner request) nil)
+                            (hey-cli-cancel-request request)))
+                    (setf (hey-cli--request-kill-hook request) kill-hook)
+                    (with-current-buffer owner
+                      (add-hook 'kill-buffer-hook kill-hook nil t))
+                    (setf (hey-cli--request-timer request)
+                          (run-at-time hey-timeout-seconds nil
+                                       #'hey-cli--timeout request))
+                    (setq setup-complete t)
+                    request)
+                (error
+                 (hey-cli--abort-request-setup request process stderr-process)
+                 (hey-cli--configuration-failure
+                  operation owner failure
+                  (if (eq (car-safe err) 'file-missing)
+                      "Configured HEY executable is unavailable."
+                    "HEY process could not be started."))
+                 nil))
+            ;; Also covers `quit' and a caller's nonlocal exit while setup is
+            ;; in progress; neither can leave the just-created CLI orphaned.
+            (unless setup-complete
+              (hey-cli--abort-request-setup request process stderr-process))))
       (error
        (hey-cli--configuration-failure
         operation owner failure "HEY transport configuration is invalid.")

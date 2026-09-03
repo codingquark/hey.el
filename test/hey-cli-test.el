@@ -230,6 +230,86 @@
             (should (= (length failures) 1)))
         (when (buffer-live-p owner) (kill-buffer owner))))))
 
+(ert-deftest hey-cli-transport-cleans-captures-after-callback-throw ()
+  (let* ((owner (generate-new-buffer " *hey-owner*"))
+         (stdout (generate-new-buffer " *hey-throw-out*"))
+         (stderr (generate-new-buffer " *hey-throw-err*"))
+         (request
+          (hey-cli--make-request
+           :stdout-buffer stdout
+           :stderr-buffer stderr
+           :owner owner
+           :success (lambda (_value) (throw 'hey-cli-test-escape t))
+           :operation 'version
+           :started-at (float-time))))
+    (unwind-protect
+        (progn
+          (with-current-buffer stdout (insert "private stdout"))
+          (with-current-buffer stderr (insert "private stderr"))
+          (should
+           (catch 'hey-cli-test-escape
+             (hey-cli--deliver request t '(("ok" . t)) 'success 0 t)
+             nil))
+          (should (hey-cli--request-completed request))
+          (should-not (buffer-live-p stdout))
+          (should-not (buffer-live-p stderr)))
+      (when (buffer-live-p owner) (kill-buffer owner))
+      (when (buffer-live-p stdout) (kill-buffer stdout))
+      (when (buffer-live-p stderr) (kill-buffer stderr)))))
+
+(ert-deftest hey-cli-transport-cleans-captures-after-callback-quit ()
+  (let* ((owner (generate-new-buffer " *hey-owner*"))
+         (stdout (generate-new-buffer " *hey-quit-out*"))
+         (stderr (generate-new-buffer " *hey-quit-err*"))
+         (request
+          (hey-cli--make-request
+           :stdout-buffer stdout
+           :stderr-buffer stderr
+           :owner owner
+           :success (lambda (_value) (signal 'quit nil))
+           :operation 'version
+           :started-at (float-time))))
+    (unwind-protect
+        (progn
+          (with-current-buffer stdout (insert "private stdout"))
+          (with-current-buffer stderr (insert "private stderr"))
+          (condition-case nil
+              (hey-cli--deliver request t '(("ok" . t)) 'success 0 t)
+            (quit nil))
+          (should (hey-cli--request-completed request))
+          (should-not (buffer-live-p stdout))
+          (should-not (buffer-live-p stderr)))
+      (when (buffer-live-p owner) (kill-buffer owner))
+      (when (buffer-live-p stdout) (kill-buffer stdout))
+      (when (buffer-live-p stderr) (kill-buffer stderr)))))
+
+(ert-deftest hey-cli-transport-kills-process-when-post-spawn-setup-fails ()
+  (hey-test-with-fake '(:scenario "delay")
+    (let ((owner (generate-new-buffer " *hey-owner*"))
+          (real-make-process (symbol-function 'make-process))
+          spawned
+          failures)
+      (unwind-protect
+          ;; Install the process wrapper before replacing `run-at-time'.  On
+          ;; native-comp builds, installing the wrapper itself can schedule
+          ;; compilation work through `run-at-time'.
+          (cl-letf (((symbol-function 'make-process)
+                     (lambda (&rest arguments)
+                       (setq spawned (apply real-make-process arguments)))))
+            (cl-letf (((symbol-function 'run-at-time)
+                       (lambda (&rest _arguments)
+                         (error "Synthetic timer setup failure"))))
+              (should-not
+               (hey-cli-test--start-version
+                owner (lambda (_value) (ert-fail "Failed setup succeeded"))
+                (lambda (error) (push error failures))))
+              (should (processp spawned))
+              (should-not (process-live-p spawned))
+              (should (= (length failures) 1))
+              (should (eq (hey-error-category (car failures)) 'configuration))))
+        (when (process-live-p spawned) (delete-process spawned))
+        (when (buffer-live-p owner) (kill-buffer owner))))))
+
 (ert-deftest hey-cli-transport-suppresses-callback-after-owner-death ()
   (hey-test-with-fake '(:scenario "delay")
     (let ((owner (generate-new-buffer " *hey-owner*")) called request)
@@ -378,6 +458,64 @@
             (should (eq (hey-error-category failure) 'configuration)))
         (when (buffer-live-p owner) (kill-buffer owner))))))
 
+(ert-deftest hey-cli-working-directory-rejects-final-symlink-without-chmod ()
+  (let* ((temporary-root (make-temp-file "hey-cwd-symlink-test-" t))
+         (target (expand-file-name "target" temporary-root))
+         (link (expand-file-name "link" temporary-root))
+         (hey-working-directory (file-name-as-directory link)))
+    (unwind-protect
+        (progn
+          (make-directory target)
+          (set-file-modes target #o750)
+          (make-symbolic-link target link)
+          (should-error (hey-cli--prepare-working-directory))
+          (should (= (file-modes target) #o750)))
+      (when (file-directory-p temporary-root)
+        (delete-directory temporary-root t)))))
+
+(ert-deftest hey-cli-working-directory-rejects-shared-writable-parent ()
+  (let* ((temporary-root (make-temp-file "hey-cwd-writable-test-" t))
+         (hey-working-directory
+          (file-name-as-directory (expand-file-name "neutral" temporary-root))))
+    (unwind-protect
+        (progn
+          (set-file-modes temporary-root #o777)
+          (should-error (hey-cli--prepare-working-directory))
+          (should-not (file-exists-p hey-working-directory)))
+      (when (file-directory-p temporary-root)
+        (set-file-modes temporary-root #o700)
+        (delete-directory temporary-root t)))))
+
+(ert-deftest hey-cli-working-directory-rejects-foreign-owner ()
+  (let* ((temporary-root (make-temp-file "hey-cwd-owner-test-" t))
+         (hey-working-directory
+          (file-name-as-directory (expand-file-name "neutral" temporary-root)))
+         (actual-uid (user-uid)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'user-uid)
+                   (lambda () (+ actual-uid 10000))))
+          (should-error (hey-cli--prepare-working-directory))
+          (should-not (file-exists-p hey-working-directory)))
+      (when (file-directory-p temporary-root)
+        (delete-directory temporary-root t)))))
+
+(ert-deftest hey-cli-working-directory-returns-canonical-private-directory ()
+  (let* ((temporary-root (make-temp-file "hey-cwd-private-test-" t))
+         (hey-working-directory
+          (file-name-as-directory
+           (expand-file-name "parent/neutral" temporary-root))))
+    (unwind-protect
+        (let ((prepared (hey-cli--prepare-working-directory)))
+          (should (equal prepared
+                         (file-name-as-directory
+                          (file-truename hey-working-directory))))
+          (should (= (file-modes prepared) #o700))
+          (should (equal (file-attribute-user-id
+                          (file-attributes prepared 'integer))
+                         (user-uid))))
+      (when (file-directory-p temporary-root)
+        (delete-directory temporary-root t)))))
+
 (ert-deftest hey-cli-missing-configured-fake-fails-closed ()
   (let* ((owner (generate-new-buffer " *hey-owner*"))
          (hey-executable (concat hey-test-fake-executable ".missing"))
@@ -394,6 +532,17 @@
       (when (buffer-live-p owner) (kill-buffer owner))
       (when (file-directory-p hey-working-directory)
         (delete-directory hey-working-directory t)))))
+
+(ert-deftest hey-test-guard-rejects-symlink-to-real-fake ()
+  (let* ((directory (make-temp-file "hey-fake-link-test-" t))
+         (link (expand-file-name "hey" directory)))
+    (unwind-protect
+        (progn
+          (make-symbolic-link hey-test-fake-executable link)
+          (should (file-equal-p link hey-test-fake-executable))
+          (should-error (hey-test-assert-exact-fake link) :type 'ert-test-failed))
+      (when (file-directory-p directory)
+        (delete-directory directory t)))))
 
 (provide 'hey-cli-test)
 ;;; hey-cli-test.el ends here

@@ -15,10 +15,14 @@
 (hey-build-initialize-packages)
 
 (let ((fake (hey-build-path "test/bin/hey")))
-  (unless (and (file-regular-p fake) (file-executable-p fake))
+  (unless (and (file-name-absolute-p fake)
+               (not (file-symlink-p fake))
+               (file-regular-p fake)
+               (file-executable-p fake)
+               (file-equal-p fake (hey-build-path "test/bin/hey")))
     (error "Fake HEY executable is missing or not executable: %s" fake))
   ;; Set before loading package files so `defcustom' cannot replace it.
-  (setq hey-executable (file-truename fake))
+  (setq hey-executable fake)
   (setenv "HEY_TEST_FAKE" hey-executable)
   ;; Even a buggy test that clears `hey-executable' cannot discover a real
   ;; binary through the user's executable search path.
@@ -34,8 +38,9 @@
     (load test nil 'nomessage)))
 
 (unless (and (boundp 'hey-executable)
-             (equal (file-truename hey-executable)
-                    (file-truename (getenv "HEY_TEST_FAKE"))))
+             (not (file-symlink-p hey-executable))
+             (equal hey-executable (getenv "HEY_TEST_FAKE"))
+             (file-equal-p hey-executable (hey-build-path "test/bin/hey")))
   (error "Tests changed hey-executable away from the repository fake"))
 
 (ert-run-tests-batch-and-exit t)

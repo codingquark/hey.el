@@ -24,6 +24,17 @@
 (defvar hey-test-record-file nil)
 (defvar hey-test-working-directory nil)
 
+(defun hey-test-assert-exact-fake (candidate)
+  "Fail unless CANDIDATE is the checked-in, non-symlink fake executable."
+  (unless (and (stringp candidate)
+               (file-name-absolute-p candidate)
+               (equal candidate hey-test-fake-executable)
+               (not (file-symlink-p candidate))
+               (file-regular-p candidate)
+               (file-executable-p candidate)
+               (file-equal-p candidate hey-test-fake-executable))
+    (ert-fail (format "Hermetic fake unavailable: %s" candidate))))
+
 (defun hey-test--set-environment (name value)
   "Set NAME to VALUE in the dynamically bound test environment."
   (setenv name value))
@@ -45,11 +56,7 @@ SETTINGS is a plist supporting `:scenario', `:timeout', and `:max-output'."
           (hey-max-output-bytes
            (or (plist-get settings-value :max-output) (* 64 1024)))
           (process-environment (copy-sequence process-environment)))
-     (unless (and (file-name-absolute-p hey-test-fake-executable)
-                  (file-regular-p hey-test-fake-executable)
-                  (file-executable-p hey-test-fake-executable))
-       (ert-fail (format "Hermetic fake unavailable: %s"
-                         hey-test-fake-executable)))
+     (hey-test-assert-exact-fake hey-executable)
      (hey-test--set-environment "HEY_EMACS_TEST_SCENARIO" scenario)
      (hey-test--set-environment "HEY_EMACS_TEST_RECORD" hey-test-record-file)
      (unwind-protect
