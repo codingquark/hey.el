@@ -13,3 +13,4 @@ All notable changes to this project will be documented in this file.
   threads instead of recursively producing another bundle.
 - Publish project metadata and package licensing under the MIT License.
 - Keep strict Checkdoc failures compatible with every supported Emacs target.
+- Update the pinned checkout action to its Node 24-compatible release.
