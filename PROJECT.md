@@ -22,6 +22,9 @@
   Markdown scaffolding.
 - CLI 1.4.0 is the minimum runtime version; startup fails visibly on older or
   malformed version responses.
+- An unusable HEY executable fails closed with package-owned remediation that
+  distinguishes `exec-path` discovery from a configured `hey-executable`, names
+  no path or operating-system error, and never falls back from an override.
 
 ## Approved prototype choices
 
@@ -131,7 +134,13 @@ and review.
   2026-09-03.
 - The archive contains exactly `hey.el`, `hey-cli.el`, `hey-model.el`,
   `LICENSE`, and a generated `hey-pkg.el` descriptor.
+- Executable-discovery UX packet: `make check` passed under the local Emacs 31.1
+  build (96/96 ERT, strict compile, lint, read-only audit, package, install).
+  Coverage pins both remediations, the absence of fallback, spawned processes,
+  path and operating-system text, start-failure classification with cleanup, and
+  exactly one retry affordance in the list.
 - Independent security review confirmed the current builders expose no mailbox
   mutation route and that prior cleanup, process-orphan, path, fake-boundary,
   and audit-bypass findings were remediated.
-- No authenticated HEY command, mailbox read, or live network request was run.
+- No authenticated HEY command, mailbox read, or HEY service network request
+  was run.

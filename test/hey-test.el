@@ -521,6 +521,27 @@
             (when (string-prefix-p "*HEY" (buffer-name buffer))
               (kill-buffer buffer))))))))
 
+(ert-deftest hey-ui-missing-executable-remediation-appears-once ()
+  "The list shows transport guidance verbatim and adds one retry affordance."
+  (save-window-excursion
+    (let ((hey-executable nil)
+          (hey-account nil)
+          (hey-working-directory
+           (file-name-as-directory (make-temp-file "hey-ui-missing-exec-" t))))
+      (cl-letf (((symbol-function 'executable-find) (lambda (_command) nil)))
+        (unwind-protect
+            (progn
+              (hey)
+              (should (eq (hey-error-category hey--error) 'configuration))
+              (should (string-match-p "not found in `exec-path'"
+                                      (buffer-string)))
+              (should (= 1 (how-many "Press g to retry"))))
+          (dolist (buffer (buffer-list))
+            (when (string-prefix-p "*HEY" (buffer-name buffer))
+              (kill-buffer buffer)))
+          (when (file-directory-p hey-working-directory)
+            (delete-directory hey-working-directory t)))))))
+
 (ert-deftest hey-ui-synchronous-builder-failure-becomes-visible-error ()
   (hey-test-with-list
     (setq hey--source

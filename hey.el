@@ -73,9 +73,6 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
   :type 'boolean
   :group 'hey)
 
-(defconst hey--minimum-cli-version "1.4.0"
-  "Oldest HEY CLI version supported by this package revision.")
-
 (defvar hey-common-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "b") #'hey-browse-url)
@@ -720,14 +717,14 @@ GENERATION and TAG identify the startup session."
                        :category 'version
                        :message
                        (format "HEY CLI %s or newer is required."
-                               hey--minimum-cli-version))))))))
+                               hey-cli-minimum-version))))))))
            (lambda (error) (hey--startup-failure buffer generation error))))))
 
 (defun hey--supported-cli-version-p (version)
-  "Return non-nil when VERSION meets `hey--minimum-cli-version'."
+  "Return non-nil when VERSION meets `hey-cli-minimum-version'."
   (and (stringp version)
        (condition-case nil
-           (not (version< version hey--minimum-cli-version))
+           (not (version< version hey-cli-minimum-version))
          (error nil))))
 
 (defun hey--startup-failure (buffer generation error)

@@ -68,6 +68,11 @@ or a directory below an ancestor containing `.hey/config.json'."
   :type 'integer
   :group 'hey)
 
+(defconst hey-cli-minimum-version "1.4.0"
+  "Oldest official HEY CLI version supported by this package.
+
+The version preflight and discovery guidance both name this baseline.")
+
 (defconst hey-cli--official-origin "https://app.hey.com"
   "The only server origin allowed by the v1 reader.")
 
@@ -363,23 +368,56 @@ and whose cdr lists the components that still need to be created."
         (error "HEY working directory changed during secure preparation"))
       directory)))
 
+;; Executable messages are package-owned prose: they name the option to change
+;; and the action to take, never a candidate path or operating-system error.
+
+(define-error
+  'hey-cli-executable-missing
+  (format "HEY CLI was not found in `exec-path'. Install HEY CLI %s or newer \
+and restart Emacs, or set `hey-executable'." hey-cli-minimum-version)
+  'error)
+
+(define-error
+  'hey-cli-executable-configured
+  "Configured `hey-executable' is not a local executable file. Set an absolute \
+path, or nil to search `exec-path'; no fallback is taken."
+  'error)
+
+(defconst hey-cli--vanished-message
+  "The HEY executable became unavailable as the request started. Reinstall it, \
+or set `hey-executable'."
+  "Failure when a validated executable disappears before startup.")
+
+(defconst hey-cli--start-message
+  "HEY process could not be started."
+  "Generic failure for any other subprocess startup error.")
+
+(defun hey-cli--executable-available-p (candidate)
+  "Return non-nil when absolute local CANDIDATE is a regular executable file."
+  (condition-case nil
+      (and (stringp candidate)
+           (file-name-absolute-p candidate)
+           (not (file-remote-p candidate))
+           (file-regular-p candidate)
+           (file-executable-p candidate))
+    (error nil)))
+
 (defun hey-cli--resolve-executable ()
-  "Return a validated absolute path to the HEY executable."
+  "Return a validated absolute path to the HEY executable.
+
+With nil `hey-executable' discover `hey' through option `exec-path'; a
+configured override is never replaced by a discovered program.  An unusable
+candidate signals `hey-cli-executable-missing' or
+`hey-cli-executable-configured'."
   (let ((candidate
          (if hey-executable
-             (progn
-               (unless (and (stringp hey-executable)
-                            (file-name-absolute-p hey-executable)
-                            (not (file-remote-p hey-executable)))
-                 (error "Configured HEY executable must be an absolute local path"))
-               hey-executable)
+             (and (stringp hey-executable) hey-executable)
            (executable-find "hey"))))
-    (unless (and candidate
-                 (file-name-absolute-p candidate)
-                 (not (file-remote-p candidate))
-                 (file-regular-p candidate)
-                 (file-executable-p candidate))
-      (error "Configured HEY executable is unavailable"))
+    (unless (hey-cli--executable-available-p candidate)
+      (signal (if hey-executable
+                  'hey-cli-executable-configured
+                'hey-cli-executable-missing)
+              nil))
     (file-truename candidate)))
 
 (defun hey-cli--owner-default-directory-local-p (owner)
@@ -664,6 +702,16 @@ guard against stale state updates."
   (when (and (buffer-live-p owner) (functionp failure))
     (funcall failure (hey-cli--make-error 'configuration message))))
 
+(defun hey-cli--start-failure-message (err executable)
+  "Return package-owned prose for setup error ERR and resolved EXECUTABLE.
+
+Only a `file-missing' whose EXECUTABLE no longer validates counts as vanished:
+the operating system may otherwise be naming the working directory."
+  (if (and (eq (car-safe err) 'file-missing)
+           (not (hey-cli--executable-available-p executable)))
+      hey-cli--vanished-message
+    hey-cli--start-message))
+
 (defun hey-cli--start-process
     (operation argv owner source-key generation success failure)
   "Start one closed read OPERATION with ARGV for OWNER.
@@ -678,7 +726,7 @@ success envelope.  FAILURE receives a `hey-error'."
      operation owner failure "HEY requests cannot originate in remote buffers.")
     nil)
    (t
-    (condition-case nil
+    (condition-case err
         (let* ((executable (hey-cli--resolve-executable))
                (working-directory (hey-cli--prepare-working-directory))
                (name (format "hey-%s-%d" operation
@@ -744,14 +792,16 @@ success envelope.  FAILURE receives a `hey-error'."
                  (hey-cli--abort-request-setup request process stderr-process)
                  (hey-cli--configuration-failure
                   operation owner failure
-                  (if (eq (car-safe err) 'file-missing)
-                      "Configured HEY executable is unavailable."
-                    "HEY process could not be started."))
+                  (hey-cli--start-failure-message err executable))
                  nil))
             ;; Also covers `quit' and a caller's nonlocal exit while setup is
             ;; in progress; neither can leave the just-created CLI orphaned.
             (unless setup-complete
               (hey-cli--abort-request-setup request process stderr-process))))
+      ((hey-cli-executable-missing hey-cli-executable-configured)
+       (hey-cli--configuration-failure
+        operation owner failure (get (car err) 'error-message))
+       nil)
       (error
        (hey-cli--configuration-failure
         operation owner failure "HEY transport configuration is invalid.")

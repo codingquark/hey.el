@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Explain a missing or unusable HEY CLI actionably: `exec-path` discovery names
+  the CLI baseline and how to install or point at it, an invalid
+  `hey-executable` says how to correct or clear it without any fallback, and a
+  process-start `file-missing` is classified only after revalidating the
+  resolved executable, so no path or operating-system text reaches the list.
+
 ## 0.1.0 - 2026-09-03
 
 - Establish the standalone three-library package structure.

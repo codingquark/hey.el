@@ -48,6 +48,19 @@ global keybindings.  Startup requires HEY CLI 1.4.0 or newer and presents a
 buffer-local error when authentication, account selection, or the version
 preflight fails.
 
+### Locating the HEY CLI
+
+The CLI is resolved lazily, when a request needs it: with the default nil
+`hey-executable`, `hey` is looked up in `exec-path`, so installing it after
+Emacs started needs a restart or an `exec-path` update.  Set `hey-executable`
+to an absolute local executable to skip that lookup; while it is set there is
+no fallback to another `hey`, so a stale or mistyped override fails loudly
+instead of quietly running a different program.
+
+When the CLI cannot be used, `M-x hey` still opens the list and names the case
+that failed and what to change; press `g` to retry.  Guidance is package-owned,
+so candidate paths and operating-system errors stay out of the buffer.
+
 ## Synthetic prototype review
 
 After `make bootstrap`, launch the complete asynchronous reader without a HEY
@@ -66,27 +79,6 @@ A clean built-package installation is exercised by `make install-check`; it is
 separate from this convenient checkout workflow.
 
 ## Appearance
-
-`hey.el` uses the active Emacs theme and does not impose HEY brand colors,
-backgrounds, fonts, or branded selection styling.  Its semantic faces inherit
-standard Emacs faces, while message bodies retain `markdown-mode`'s normal
-appearance.  `hey-list-mode` enables buffer-local `hl-line-mode` by default so
-the current row uses the theme's standard `hl-line` face; customize
-`hey-highlight-current-row` to nil to opt out.  Unseen state, collections,
-warnings, and errors also have textual or symbolic cues, so color is never
-their only distinction.
-
-Posting-list dates are rendered in the user's local time as `Today HH:MM`,
-`Yesterday HH:MM`, or `YYYY-MM-DD` for older valid timestamps.  Missing
-timestamps stay blank and malformed timestamps retain their sanitized source
-text; thread timestamps are unchanged.  In the wide layout, Subject and
-Summary split their flexible space three-to-two and both truncate visually
-with their complete text available as help.  When none of the currently loaded
-rows has a label or collection, the memberships column is omitted and its
-space is shared by those two columns; at wide and medium breakpoints it returns
-when a loaded row has membership data.  Medium and narrower layouts continue
-to prioritize subject width.  The list does not add date grouping or
-package-branded colors.
 
 Run `M-x customize-group RET hey` to adjust the package options and faces,
 including the current-row highlight.  Theme authors can customize
@@ -136,7 +128,8 @@ their pinned SHA-256 digests are still enforced.
 Individual targets are `test`, `compile`, `lint`, `package`, and
 `install-check`.  Every automated test binds `hey-executable` to the
 repository's scenario-driven fake executable; a missing fake is a hard failure,
-never a fallback to an installed `hey` program.
+never a fallback to an installed `hey` program.  Tests exercising nil
+`hey-executable` stub the discovery lookup instead of using a real search path.
 
 The package target creates a deterministic multi-file tar archive in `dist/`.
 Only `hey.el`, `hey-cli.el`, `hey-model.el`, `LICENSE`, and a generated

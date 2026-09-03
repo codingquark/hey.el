@@ -100,6 +100,60 @@
   "Start a version request for OWNER with SUCCESS and FAILURE callbacks."
   (hey-cli-version owner '(test-source) 1 success failure))
 
+(defun hey-cli-test--live-processes ()
+  "Return live HEY transport processes, which no completed test may leave."
+  (cl-loop for process in (process-list)
+           when (and (process-live-p process)
+                     (string-match-p "\\`hey-" (process-name process)))
+           collect process))
+
+(defun hey-cli-test--transport-buffers ()
+  "Return private HEY capture buffers, which no completed test may leave."
+  (cl-loop for buffer in (buffer-list)
+           when (string-match-p "\\` *hey-.*-\\(?:out\\|err\\)\\*\\'"
+                                (buffer-name buffer))
+           collect buffer))
+
+(defvar hey-cli-test--discovered nil
+  "Commands the stubbed `executable-find' was asked about.")
+
+(defmacro hey-cli-test--stub-discovery (result &rest body)
+  "Run BODY with `executable-find' returning RESULT for \"hey\".
+
+Every requested command is recorded in `hey-cli-test--discovered'."
+  (declare (indent 1) (debug (form body)))
+  `(let ((hey-cli-test--discovered '()))
+     (cl-letf (((symbol-function 'executable-find)
+                (lambda (command)
+                  (push command hey-cli-test--discovered)
+                  (and (string= command "hey") ,result))))
+       ,@body)))
+
+(defun hey-cli-test--fail-version (owner)
+  "Return OWNER's `hey-error' from a version request that must not start."
+  (let (failure)
+    (should-not (hey-cli-test--start-version
+                 owner
+                 (lambda (_value) (ert-fail "Unexpected transport success"))
+                 (lambda (error) (setq failure error))))
+    (should failure)
+    (should-not (hey-cli-test--live-processes))
+    (should-not (hey-cli-test--transport-buffers))
+    failure))
+
+(defun hey-cli-test--assert-failure (failure patterns)
+  "Assert FAILURE is a configuration failure matching every PATTERNS entry.
+
+Package-owned prose names no path or operating-system detail and leaves the
+retry affordance to the list."
+  (should (eq (hey-error-category failure) 'configuration))
+  (let ((message (hey-error-message failure)))
+    (dolist (pattern patterns)
+      (should (string-match-p pattern message)))
+    (should-not (string-match-p "/" message))
+    (should-not (string-match-p "retry" message))
+    (should (string= message (hey-model-sanitize-metadata message)))))
+
 (ert-deftest hey-cli-transport-parses-success-envelope ()
   (hey-test-with-fake '(:scenario "success")
     (let ((owner (generate-new-buffer " *hey-owner*")) result failure)
@@ -516,22 +570,125 @@
       (when (file-directory-p temporary-root)
         (delete-directory temporary-root t)))))
 
-(ert-deftest hey-cli-missing-configured-fake-fails-closed ()
-  (let* ((owner (generate-new-buffer " *hey-owner*"))
-         (hey-executable (concat hey-test-fake-executable ".missing"))
-         (hey-working-directory
-          (file-name-as-directory (make-temp-file "hey-missing-test-" t)))
-         failure)
+(ert-deftest hey-cli-undiscovered-executable-explains-discovery ()
+  "Nil `hey-executable' names the CLI baseline and its remedies."
+  (let ((owner (generate-new-buffer " *hey-owner*"))
+        (hey-executable nil)
+        (hey-working-directory
+         (file-name-as-directory (make-temp-file "hey-discover-test-" t))))
     (unwind-protect
-        (progn
-          (should-not
-           (hey-cli-test--start-version
-            owner (lambda (_value) (ert-fail "Missing fake fell through"))
-            (lambda (error) (setq failure error))))
-          (should (eq (hey-error-category failure) 'configuration)))
+        (hey-cli-test--stub-discovery nil
+          (hey-cli-test--assert-failure
+           (hey-cli-test--fail-version owner)
+           '("not found in `exec-path'" "1.4.0 or newer" "restart Emacs"
+             "`hey-executable'"))
+          (should (equal hey-cli-test--discovered '("hey"))))
       (when (buffer-live-p owner) (kill-buffer owner))
       (when (file-directory-p hey-working-directory)
         (delete-directory hey-working-directory t)))))
+
+(ert-deftest hey-cli-invalid-executable-overrides-fail-closed ()
+  "Every unusable `hey-executable' shares one message and never falls back."
+  (let* ((temporary-root
+          (file-name-as-directory (make-temp-file "hey-override-test-" t)))
+         (directory-override (expand-file-name "directory" temporary-root))
+         (non-executable (expand-file-name "not-executable" temporary-root)))
+    (make-directory directory-override)
+    (with-temp-file non-executable (insert "#!/bin/sh\n"))
+    (set-file-modes non-executable #o600)
+    (unwind-protect
+        ;; Discovery would find the fake, so consulting it would prove fallback.
+        (hey-cli-test--stub-discovery hey-test-fake-executable
+          (dolist (candidate (list "relative/hey"
+                                   "/ssh:remote.example.invalid/usr/bin/hey"
+                                   (expand-file-name "absent" temporary-root)
+                                   directory-override
+                                   non-executable))
+            (let ((owner (generate-new-buffer " *hey-owner*"))
+                  (hey-executable candidate)
+                  (hey-working-directory
+                   (expand-file-name "neutral" temporary-root)))
+              (unwind-protect
+                  (let ((failure (hey-cli-test--fail-version owner)))
+                    (hey-cli-test--assert-failure
+                     failure
+                     '("Configured `hey-executable'" "absolute path"
+                       "nil to search" "no fallback"))
+                    (should-not (member "hey" hey-cli-test--discovered))
+                    ;; The rejected value never reaches the reader.
+                    (should-not (string-match-p
+                                 (regexp-quote temporary-root)
+                                 (hey-error-message failure))))
+                (when (buffer-live-p owner) (kill-buffer owner))))))
+      (set-file-modes temporary-root #o700)
+      (delete-directory temporary-root t))))
+
+(ert-deftest hey-cli-nil-executable-resolves-through-discovery ()
+  "Discovery still drives a real request once `hey-executable' is nil."
+  (hey-test-with-fake '(:scenario "success")
+    (let ((owner (generate-new-buffer " *hey-owner*"))
+          (hey-executable nil)
+          result failure)
+      (unwind-protect
+          (hey-cli-test--stub-discovery hey-test-fake-executable
+            (should
+             (hey-cli-test--start-version
+              owner (lambda (value) (setq result value))
+              (lambda (error) (setq failure error))))
+            (hey-test-await (lambda () (or result failure)))
+            (should (equal hey-cli-test--discovered '("hey")))
+            (should-not failure)
+            (should result)
+            (should (string-match-p "arg=version" (hey-test-read-record))))
+        (when (buffer-live-p owner) (kill-buffer owner))))))
+
+(ert-deftest hey-cli-executable-vanishing-at-start-is-named ()
+  "A `file-missing' for an executable that no longer validates is classified."
+  (let* ((temporary-root (make-temp-file "hey-vanish-test-" t))
+         ;; A byte copy of the fake, so only this path can vanish.
+         (volatile (expand-file-name "hey" temporary-root))
+         (owner (generate-new-buffer " *hey-owner*"))
+         (hey-executable volatile)
+         (hey-working-directory
+          (file-name-as-directory (expand-file-name "neutral" temporary-root))))
+    (copy-file hey-test-fake-executable volatile)
+    (set-file-modes volatile #o750)
+    (unwind-protect
+        (cl-letf (((symbol-function 'make-process)
+                   (lambda (&rest _args)
+                     ;; The executable disappears between validation and start.
+                     (delete-file volatile)
+                     (signal 'file-missing
+                             '("Searching for program"
+                               "No such file or directory")))))
+          (hey-cli-test--assert-failure
+           (hey-cli-test--fail-version owner)
+           '("became unavailable" "`hey-executable'"))
+          (should-not (file-exists-p volatile)))
+      (when (buffer-live-p owner) (kill-buffer owner))
+      (when (file-directory-p temporary-root)
+        (delete-directory temporary-root t)))))
+
+(ert-deftest hey-cli-other-start-failures-stay-generic ()
+  "Start errors with a valid executable leak no operating-system detail."
+  (hey-test-with-fake '(:scenario "success")
+    (dolist (error-data
+             '((file-missing "Searching for program"
+                             "No such file or directory"
+                             "/secret/working/directory")
+               (file-error "Permission denied" "/secret/bin/hey")))
+      (let ((owner (generate-new-buffer " *hey-owner*")) failure)
+        (unwind-protect
+            (progn
+              (cl-letf (((symbol-function 'make-process)
+                         (lambda (&rest _args)
+                           (signal (car error-data) (cdr error-data)))))
+                (setq failure (hey-cli-test--fail-version owner)))
+              (should (equal (hey-error-message failure)
+                             "HEY process could not be started."))
+              (should-not (string-match-p "secret" (hey-error-message failure)))
+              (should-not (hey-error-exit-status failure)))
+          (when (buffer-live-p owner) (kill-buffer owner)))))))
 
 (ert-deftest hey-test-guard-rejects-symlink-to-real-fake ()
   (let* ((directory (make-temp-file "hey-fake-link-test-" t))

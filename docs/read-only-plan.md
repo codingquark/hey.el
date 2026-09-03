@@ -343,6 +343,19 @@ representations, and additional future keys.
 
 - Resolve `hey` lazily with a configurable executable override.
 - Reject remote executables and remote `default-directory` values.
+- Fail closed on an unusable executable with distinct package-owned remediation:
+  discovery names the CLI baseline and how to install it, restart Emacs, or set
+  `hey-executable`; an unusable override names that option as what to correct or
+  clear and states that no fallback is taken. Neither case borrows the other's
+  remedy. Failures travel through the ordinary asynchronous `configuration`
+  channel, never as a raw signal and never with a candidate path, environment
+  value, or operating-system text, and the list owns the one retry affordance.
+- Re-validate a resolved executable only to classify a `file-missing` from
+  `make-process`: gone means it became unavailable, still valid keeps the
+  generic start failure because the operating system may name the working
+  directory.
+- Name the CLI baseline once as `hey-cli-minimum-version` so the version
+  preflight and discovery guidance cannot disagree.
 - Run every subprocess from a dedicated private local working directory rather
   than inheriting the requesting buffer's `default-directory`. The directory
   stores no mail, configuration, credentials, or cache data and may remain
@@ -1182,6 +1195,10 @@ design and safety review rather than another item in this delivery plan.
 - dropping breadcrumbs, install IDs, and unused sync metadata;
 - Unicode and leading-dash positional values;
 - output limit.
+- executable discovery and override failures: undiscovered `hey` and every
+  unusable override class, each sanitized and failing without a search-path
+  fallback or a spawned process; nil `hey-executable` discovery still driving a
+  real request through the fake; process-start classification with cleanup.
 
 ### Buffer/UI tests
 
@@ -1190,6 +1207,8 @@ design and safety review rather than another item in this delivery plan.
 - `hey` enters the configured Imbox list without an account prompt;
 - nil and explicit `hey-account` values resolve correctly, and an unavailable
   explicit account does not silently fall back;
+- a missing CLI reaches the list as its package-owned remediation, with the
+  retry affordance contributed exactly once by the list;
 - `B` invokes box selection without changing CLI configuration;
 - bundle rows expand without substituting posting IDs for topic IDs;
 - posting labels and collections render distinctly, compact predictably, expose
