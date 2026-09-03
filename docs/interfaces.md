@@ -28,6 +28,10 @@ cross into `hey.el`; model normalizers are the only consumers.
   labels labels-known-p collections collections-known-p entries app-url notice`
 - `hey-error`: `category message code hint exit-status`
 
+Posting read state is binary: the model normalizes a posting to `seen` only
+when the CLI's `seen` field is literal JSON `true`; JSON `false`, `null`, a
+missing field, or any other value normalizes to `unseen`.
+
 Required public pure functions:
 
 - `hey-model-sanitize-metadata STRING`

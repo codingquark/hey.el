@@ -18,6 +18,9 @@ The project is under active development at
 Authentication remains owned by the HEY CLI.  The package does not accept or
 store bearer tokens.
 
+A posting is seen only when the CLI returns literal JSON `true` in its `seen`
+field. `false`, `null`, a missing field, or any other value is shown as unseen.
+
 ## Development-checkout installation
 
 Add the checkout to `load-path` and let `use-package` discover the autoloaded

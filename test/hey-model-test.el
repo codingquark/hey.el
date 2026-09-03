@@ -182,7 +182,7 @@
                    "https://app.hey.com/topics/901"))
     (should (eq (hey-posting-kind bundle) 'bundle))
     (should-not (hey-posting-topic-id bundle))
-    (should (eq (hey-posting-seen bundle) 'unknown))
+    (should (eq (hey-posting-seen bundle) 'unseen))
     (should-not (hey-posting-app-url bundle))
     (should (equal (hey-source-continuation updated) "cursor-2"))
     (should-not (hey-source-exhausted updated))
@@ -264,7 +264,7 @@
     (should (equal (hey-posting-key posting) '("all" "77")))
     (should-not (hey-posting-id posting))
     (should (equal (hey-posting-topic-id posting) "77"))
-    (should (eq (hey-posting-seen posting) 'unknown))
+    (should (eq (hey-posting-seen posting) 'unseen))
     (should-not (hey-posting-labels posting))
     (should-not (hey-posting-collections posting))
     (should (equal (hey-posting-contacts posting) "First Match"))
@@ -372,6 +372,11 @@
     (should (<= (string-width (aref medium 3)) 24))
     (should (<= (string-width (aref narrow 2)) 16))
     (should-error (hey-model-posting-row posting 'unknown-layout))))
+
+(ert-deftest hey-model-treats-only-json-true-as-seen ()
+  (should (eq (hey-model--seen-state t) 'seen))
+  (dolist (raw (list 'hey-json-false nil "false" 0))
+    (should (eq (hey-model--seen-state raw) 'unseen))))
 
 (ert-deftest hey-model-renders-bodyless-entry-summary ()
   (let* ((context (list :account-id "all" :account-name "All Accounts"

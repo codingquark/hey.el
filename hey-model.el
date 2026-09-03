@@ -408,10 +408,8 @@ Return a plist with `:value' and `:warnings'."
     (nreverse memberships)))
 
 (defun hey-model--seen-state (raw)
-  "Return the tri-state seen value represented by RAW."
-  (cond ((eq raw t) 'seen)
-        ((eq raw 'hey-json-false) 'unseen)
-        (t 'unknown)))
+  "Return `seen' only when RAW is t, and `unseen' otherwise."
+  (if (eq raw t) 'seen 'unseen))
 
 (defun hey-model--normalize-match (raw)
   "Normalize one matching-message RAW object."
@@ -467,11 +465,7 @@ Return a plist with `:value' and `:warnings'."
          :timestamp (hey-model--clean-string
                      (or (hey-model--get (if search-p "updated_at" "created_at") raw)
                          (hey-model--get "updated_at" raw)))
-         :seen (if search-p
-                   'unknown
-                 (if (hey-model--has-key-p "seen" raw)
-                     (hey-model--seen-state (hey-model--get "seen" raw))
-                   'unknown))
+         :seen (hey-model--seen-state (hey-model--get "seen" raw))
          :labels (unless search-p
                    (hey-model--normalize-memberships
                     (hey-model--get "folders" raw)))
@@ -756,9 +750,9 @@ The frozen layouts are:
   `narrow'  [sender subject memberships date]
   `minimal' [sender subject date]
 
-Unseen subjects carry a leading marker and bold face.  Unknown seen state is
-not styled as unseen.  Memberships expose their complete values via
-`help-echo'."
+Unseen subjects carry a leading marker and bold face.  A posting is seen only
+when the CLI's `seen' value is true; every other value is unseen.  Memberships
+expose their complete values via `help-echo'."
   (let* ((subject (hey-posting-subject posting))
          (subject-cell
           (if (eq (hey-posting-seen posting) 'unseen)

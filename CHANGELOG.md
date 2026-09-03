@@ -14,3 +14,4 @@ All notable changes to this project will be documented in this file.
 - Publish project metadata and package licensing under the MIT License.
 - Keep strict Checkdoc failures compatible with every supported Emacs target.
 - Update the pinned checkout action to its Node 24-compatible release.
+- Treat a posting as seen only when the CLI's `seen` field is literal true.

@@ -28,8 +28,8 @@
 - Show summary text only in the wide list layout; progressively remove it at
   narrower breakpoints.
 - Show compact labels and collections with the complete values in help text.
-- Mark unseen rows with a leading dot and bold subject; unknown state is not
-  presented as unseen.
+- Mark unseen rows with a leading dot and bold subject. A posting is seen iff
+  the CLI's `seen` field is literal JSON `true`; every other value is unseen.
 - Open with `RET` in the same window and `o` in another window.
 - Use explicit `M` for load more; resize never fetches data.
 - Use `n`/`p` for posting rows and thread-entry boundaries; keep `SPC`/`DEL`

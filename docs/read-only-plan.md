@@ -257,7 +257,9 @@ records. There is no previous-page stack.
 - normalized contacts/sender display;
 - summary/snippet;
 - created/updated time;
-- seen state (`seen`, `unseen`, or `unknown`) for display only;
+- binary seen state (`seen` or `unseen`) for display only: a posting is seen
+  iff the CLI's `seen` field is literal JSON `true`; every other value is
+  unseen;
 - ordered label ID/name records from posting `folders` when supplied;
 - ordered collection ID/name records when supplied;
 - optional validated application URL;
@@ -293,8 +295,9 @@ Normalization is source-specific:
 - box, bundle, label, and collection postings map `name` to subject and use
   their posting-level contacts, summary, timestamps, seen state, labels,
   collection memberships, and app URL;
-- search maps `subject` directly, requires `topic_id`, treats posting `id` and
-  seen state as optional/unknown, retains all returned `messages`, and derives
+- search maps `subject` directly, requires `topic_id`, treats posting `id` as
+  optional, applies the same true-only `seen` rule, retains all returned
+  `messages`, and derives
   row sender, snippet, and optional app URL from the first matching message in
   CLI order. Search does not currently supply reliable thread labels or
   collection memberships; leave them unknown rather than issuing per-result
@@ -550,8 +553,8 @@ HEY · Personal · Imbox · 37 shown · more available
 Rules:
 
 - unseen is expressed primarily by weight plus a restrained marker, not a
-  theme-dependent bright color; unknown seen state suppresses both rather than
-  being treated as unseen;
+  theme-dependent bright color; only a literal JSON `true` `seen` value
+  suppresses that unseen presentation;
 - one logical posting per row;
 - a bundled posting without `topic_id` is shown distinctly and opens its
   read-only `bundle view` child list; external URL handoff remains available
@@ -1098,7 +1101,7 @@ design and safety review rather than another item in this delivery plan.
   name and the absence of forbidden output flags;
 - no write verb can be built;
 - JSON null/false/missing/additional-key handling;
-- source-specific box/bundle/search normalization and tri-state seen handling;
+- source-specific box/bundle/search normalization and true-only seen handling;
 - posting label and collection normalization, including absent memberships in
   search results;
 - posting/topic/account ID separation, including missing IDs and rejecting
