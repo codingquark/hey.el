@@ -72,15 +72,16 @@ publication decisions.
 
 ## Acceptance evidence
 
-- Parent full gate, local pinned dependency cache:
-  `make EMACS=/Applications/Emacs.app/Contents/MacOS/Emacs check` — 74/74 ERT,
+- Parent full gate, local pinned dependency cache, rerun after the bundle
+  navigation fix:
+  `make EMACS=/Applications/Emacs.app/Contents/MacOS/Emacs check` — 75/75 ERT,
   strict byte compilation, checkdoc/package-lint, read-only audit, package, and
   fresh install all passed.
 - Parent clean offline gate used a fresh ELPA directory plus the two documented
   checksum-pinned archive overrides — the same 74/74 and all build stages
   passed without dependency network access.
-- Independent quality review rebuilt the artifact twice with identical SHA-256
-  `5813ebddedb0bdd61c7e25ed9549a7c7895d803b1e51dfdf238e5d028e8229b0`.
+- The post-fix package artifact has SHA-256
+  `734c9b883801992bb1dca5229c5eef15a47fb662c3d8da8c0ba5c4b99f2b5df7`.
 - The archive contains exactly `hey.el`, `hey-cli.el`, `hey-model.el`, and
   `hey-pkg.el`.
 - Independent security review confirmed the current builders expose no mailbox

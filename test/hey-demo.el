@@ -95,8 +95,15 @@
   "Fake bundle POSTING-ID in ACCOUNT at PAGE for OWNER.
 
 Delegate with KEY and GENERATION, delivering to SUCCESS or FAILURE."
-  (ignore posting-id)
-  (hey-demo--postings account "bundle" page owner key generation success failure))
+  (ignore account posting-id page owner key generation failure)
+  (hey-demo--deliver
+   success
+   `(("ok" . t)
+     ("data" ("postings"
+              ,(hey-demo--posting 510 910 "Build completed"
+                                  "CI Bot" t)
+              ,(hey-demo--posting 511 911 "Status report"
+                                  "Release Bot" t))))))
 
 (defun hey-demo--search
     (_account query page _owner _key _generation success _failure)

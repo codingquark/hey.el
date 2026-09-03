@@ -388,25 +388,40 @@
       (should-not (string-match-p (regexp-quote query) (hey--status-header)))
       (should (eq (hey-source-kind hey--source) 'search)))))
 
-(ert-deftest hey-ui-bundle-expands-by-posting-id-not-topic-id ()
+(ert-deftest hey-ui-bundle-expands-in-one-stable-buffer ()
   (save-window-excursion
     (hey-test-with-list
       (let* ((result (hey-model-normalize-postings
                       (hey-test--postings-envelope
                        (list (hey-test--posting 502 nil "Bundle" "bundle")))
                       hey--source))
-             called)
+             (origin-buffer (current-buffer))
+             (calls 0)
+             bundle-buffer)
         (setq hey--records (plist-get result :value)
               hey--operation-overrides
               `((hey-cli-bundle-view
                  . ,(lambda (_account posting-id _page _owner _key _generation success _failure)
-                      (setq called posting-id)
-                      (funcall success (hey-test--postings-envelope nil))))))
+                      (should (equal posting-id "502"))
+                      (cl-incf calls)
+                      (funcall
+                       success
+                       (hey-test--postings-envelope
+                        (list (hey-test--posting
+                               510 910 "Contained thread"))))))))
         (hey--render-list)
         (hey-open)
-        (should (equal called "502"))
+        (setq bundle-buffer (current-buffer))
+        (should (equal (buffer-name) "*HEY bundle: 101/502*"))
         (should (eq (hey-source-kind hey--source) 'bundle))
-        (kill-buffer (current-buffer))))))
+        (should (= (length hey--records) 1))
+        (should (eq (hey-posting-kind (car hey--records)) 'thread))
+        (with-current-buffer origin-buffer
+          (hey-open))
+        (should (eq (current-buffer) bundle-buffer))
+        (should (= calls 2))
+        (should-not (get-buffer "*HEY bundle: 101/502*<2>"))
+        (kill-buffer bundle-buffer)))))
 
 (ert-deftest hey-ui-thread-rendering-keeps-entry-properties-and-navigation ()
   (save-window-excursion

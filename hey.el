@@ -177,6 +177,10 @@ primitive."
   "Return the public thread buffer name for ACCOUNT-ID and TOPIC-ID."
   (format "*HEY thread: %s/%s*" account-id topic-id))
 
+(defun hey--bundle-buffer-name (account-id posting-id)
+  "Return the public bundle buffer name for ACCOUNT-ID and POSTING-ID."
+  (format "*HEY bundle: %s/%s*" account-id posting-id))
+
 (defun hey--minimum-window-width ()
   "Return the minimum body width of windows showing the current buffer."
   (let ((windows (get-buffer-window-list (current-buffer) nil t)))
@@ -836,13 +840,20 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                       :kind 'bundle :account-id account-id
                       :id (hey-posting-id posting) :title "Bundle"
                       :continuation-kind 'cursor))
-             (buffer (generate-new-buffer
-                      (format "*HEY: %s / Bundle*" account-id))))
+             (buffer (get-buffer-create
+                      (hey--bundle-buffer-name
+                       account-id (hey-posting-id posting)))))
         (with-current-buffer buffer
-          (hey-list-mode)
+          (unless (derived-mode-p 'hey-list-mode)
+            (hey-list-mode))
+          (hey--cancel-request)
           (setq hey--account account
                 hey--source source
                 hey--origin origin
+                hey--records nil
+                hey--warnings nil
+                hey--error nil
+                hey--stale nil
                 hey--operation-overrides overrides)
           (hey--refresh nil))
         (hey-display-buffer buffer intent))
