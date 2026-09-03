@@ -15,13 +15,15 @@ cross into `hey.el`; model normalizers are the only consumers.
 `hey-model.el` provides these `cl-defstruct` types and generated accessors:
 
 - `hey-account`: `id name email all-p`
+- `hey-auth-status`: `authenticated account-id`
+- `hey-version`: `version source`
 - `hey-source`: `key kind account-id id title query continuation-kind
   continuation consumed exhausted current-page`
 - `hey-membership`: `id name`
 - `hey-match`: `id sender timestamp summary app-url`
 - `hey-posting`: `key kind account-id id topic-id subject contacts summary
   timestamp seen labels collections app-url matches original-index`
-- `hey-entry`: `id sender timestamp body body-state app-url`
+- `hey-entry`: `id sender timestamp body summary body-state app-url`
 - `hey-thread`: `account-id account-name topic-id subject source-title senders
   labels labels-known-p collections collections-known-p entries app-url notice`
 - `hey-error`: `category message code hint exit-status`
@@ -32,7 +34,11 @@ Required public pure functions:
 - `hey-model-validate-app-url STRING`
 - `hey-model-resolve-body-url STRING`
 - `hey-model-normalize-accounts ENVELOPE`
+- `hey-model-normalize-auth-status ENVELOPE`
+- `hey-model-normalize-version ENVELOPE`
 - `hey-model-normalize-boxes ENVELOPE ACCOUNT-ID`
+- `hey-model-normalize-labels ENVELOPE ACCOUNT-ID`
+- `hey-model-normalize-collections ENVELOPE ACCOUNT-ID`
 - `hey-model-normalize-postings ENVELOPE SOURCE`
 - `hey-model-normalize-thread ENVELOPE CONTEXT`
 - `hey-model-envelope-notice ENVELOPE`

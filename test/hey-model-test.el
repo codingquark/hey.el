@@ -79,6 +79,67 @@
     (should (equal (hey-account-email (cadr accounts))
                    "reader@example.invalid"))))
 
+(ert-deftest hey-model-normalizes-auth-status-without-device-metadata ()
+  (let* ((result
+          (hey-model-normalize-auth-status
+           '(("ok" . t)
+             ("data" ("authenticated" . t)
+              ("mail_account" . "all")
+              ("install_id" . "must-not-cross-boundary")))))
+         (status (plist-get result :value)))
+    (should (hey-auth-status-authenticated status))
+    (should (equal (hey-auth-status-account-id status) "all"))
+    (should-not (plist-get result :warnings)))
+  (let ((result (hey-model-normalize-auth-status
+                 '(("ok" . t) ("data" ("mail_account" . "all"))))))
+    (should-not (hey-auth-status-authenticated (plist-get result :value)))
+    (should (plist-get result :warnings)))
+  (let ((result (hey-model-normalize-auth-status
+                 '(("ok" . t)
+                   ("data" ("authenticated" . hey-json-false))))))
+    (should-not (hey-auth-status-authenticated (plist-get result :value)))
+    (should-not (plist-get result :warnings))))
+
+(ert-deftest hey-model-normalizes-version-with-minimal-provenance ()
+  (let* ((result
+          (hey-model-normalize-version
+           '(("ok" . t)
+             ("data" ("version" . "1.4.0")
+              ("source" . "release")
+              ("commit" . "must-not-cross-boundary")
+              ("date" . "must-not-cross-boundary")
+              ("go" . "must-not-cross-boundary")))))
+         (version (plist-get result :value)))
+    (should (equal (hey-version-version version) "1.4.0"))
+    (should (equal (hey-version-source version) "release"))
+    (should-not (plist-get result :warnings)))
+  (let* ((result
+          (hey-model-normalize-version
+           `(("ok" . t)
+             ("data" ("version" . ,(concat "1.4.0" (string 10)))
+              ("source" . "release")))))
+         (version (plist-get result :value)))
+    (should-not (hey-version-version version))
+    (should (plist-get result :warnings))))
+
+(ert-deftest hey-model-normalizes-label-and-collection-inventories ()
+  (let ((envelope
+         (list (cons "ok" t)
+               (cons "data"
+                     (list '(("id" . 11) ("name" . "Planning"))
+                           '(("id" . 12) ("name" . "Launch\nNotes"))
+                           '(("id" . "--help") ("name" . "Unsafe")))))))
+    (dolist (case `((hey-model-normalize-labels . label)
+                    (hey-model-normalize-collections . collection)))
+      (let* ((result (funcall (car case) envelope "all"))
+             (sources (plist-get result :value)))
+        (should (= (length sources) 2))
+        (should (= (length (plist-get result :warnings)) 1))
+        (should (eq (hey-source-kind (car sources)) (cdr case)))
+        (should (equal (hey-source-key (car sources))
+                       (list (cdr case) "all" "11")))
+        (should (equal (hey-source-title (cadr sources)) "Launch Notes"))))))
+
 (ert-deftest hey-model-normalizes-box-kind-as-command-identity ()
   (let* ((result (hey-model-normalize-boxes
                   (hey-model-test--fixture "boxes-defensive.json") "101"))
@@ -127,6 +188,24 @@
     (should-not (hey-source-exhausted updated))
     ;; The model API is pure: response pagination updates a copy.
     (should-not (hey-source-continuation source))))
+
+(ert-deftest hey-model-separates-command-targets-from-opaque-cursors ()
+  (let* ((source (make-hey-source :kind 'box :account-id "101"))
+         (cursor-result
+          (hey-model-normalize-postings
+           '(("ok" . t)
+             ("data" ("postings") ("next_page" . "-opaque-cursor")))
+           source))
+         (box-result
+          (hey-model-normalize-boxes
+           '(("ok" . t)
+             ("data" (("kind" . "--help") ("name" . "Unsafe"))))
+           "101")))
+    (should (equal (hey-source-continuation
+                    (plist-get cursor-result :source))
+                   "-opaque-cursor"))
+    (should-not (plist-get box-result :value))
+    (should (plist-get box-result :warnings))))
 
 (ert-deftest hey-model-normalizes-every-cursor-source-with-one-contract ()
   (dolist (kind '(box bundle label collection))
@@ -211,6 +290,23 @@
     (should (hey-source-exhausted updated))
     (should-not (hey-source-continuation updated))))
 
+(ert-deftest hey-model-repeated-search-page-is-exhausted ()
+  (let* ((source (make-hey-source
+                  :key '(search "all" "synthetic query")
+                  :kind 'search :account-id "all" :title "Search"
+                  :query "synthetic query" :continuation-kind 'page
+                  :current-page 4 :consumed '(4)))
+         (result (hey-model-normalize-postings
+                  (hey-model-test--fixture "search-defensive.json") source))
+         (updated (plist-get result :source)))
+    (should (plist-get result :value))
+    (should (hey-source-exhausted updated))
+    (should-not (hey-source-continuation updated))
+    (should (equal (hey-source-consumed source) '(4)))
+    (should (cl-find-if (lambda (warning)
+                          (string-match-p "repeated" warning))
+                        (plist-get result :warnings)))))
+
 (ert-deftest hey-model-normalizes-flat-partial-thread-in-cli-order ()
   (let* ((context (list :account-id "all"
                         :account-name "All Accounts"
@@ -272,7 +368,31 @@
                             (substring-no-properties (aref wide 3))))
     (should (string-match-p "Labels: Planning, Receipts, Travel"
                             (get-text-property 0 'help-echo (aref wide 3))))
+    (should (<= (string-width (aref wide 3)) 28))
+    (should (<= (string-width (aref medium 3)) 24))
+    (should (<= (string-width (aref narrow 2)) 16))
     (should-error (hey-model-posting-row posting 'unknown-layout))))
+
+(ert-deftest hey-model-renders-bodyless-entry-summary ()
+  (let* ((context (list :account-id "all" :account-name "All Accounts"
+                        :topic-id "77" :subject "Synthetic"
+                        :source-title "Search"))
+         (result
+          (hey-model-normalize-thread
+           '(("ok" . t)
+             ("data" (("id" . 803)
+                      ("created_at" . "2026-09-03 12:00")
+                      ("creator" ("name" . "Alice"))
+                      ("body" . "")
+                      ("summary" . "Only\ncontent *safe*")
+                      ("body_state" . "bodyless"))))
+           context))
+         (entry (car (hey-thread-entries (plist-get result :value))))
+         (markdown (hey-model-thread-markdown (plist-get result :value))))
+    (should (equal (hey-entry-summary entry) "Only content *safe*"))
+    (should (string-match-p
+             (regexp-quote "Only content \\*safe\\*") markdown))
+    (should-not (string-match-p "no body" markdown))))
 
 (ert-deftest hey-model-thread-markdown-escapes-scaffold-not-body ()
   (let* ((context (list :account-id "all"
@@ -306,6 +426,14 @@
     (should (string-match-p (regexp-quote "# Body heading\n\nBody text") markdown))
     (should (string-match-p (regexp-quote "*(body not read: over limit)*")
                             markdown))
+    (let ((first (text-property-any 0 (length markdown)
+                                    'hey-entry-start t markdown)))
+      (should first)
+      (should (equal (get-text-property first 'hey-entry-id markdown) "801"))
+      (let ((second (text-property-any (1+ first) (length markdown)
+                                       'hey-entry-start t markdown)))
+        (should second)
+        (should (equal (get-text-property second 'hey-entry-id markdown) "802"))))
     (should (string-match-p "^Notice:         Thread read only in part\\\\!$"
                             markdown))))
 

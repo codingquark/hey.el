@@ -25,6 +25,14 @@
   "A linked HEY mail account or the all-accounts filter."
   id name email all-p)
 
+(cl-defstruct hey-auth-status
+  "Normalized authentication state and global account selection."
+  authenticated account-id)
+
+(cl-defstruct hey-version
+  "Normalized HEY CLI version and build-source description."
+  version source)
+
 (cl-defstruct hey-source
   "A stable read source and its append-pagination state."
   key kind account-id id title query continuation-kind continuation consumed
@@ -47,7 +55,7 @@ KIND is the symbol `bundle' for a bundle row and `thread' otherwise."
 
 (cl-defstruct hey-entry
   "One normalized entry in a HEY thread."
-  id sender timestamp body body-state app-url)
+  id sender timestamp body summary body-state app-url)
 
 (cl-defstruct hey-thread
   "A normalized HEY thread assembled from entries and origin context."
@@ -97,6 +105,7 @@ two hostile identifiers cannot collapse onto one composite identity."
       (and (not (string-empty-p value))
            (string= clean value)
            (string= value (string-trim value))
+           (not (string-prefix-p "-" value))
            (not (string-match-p "\\`0+\\'" value))
            value)))
    (t nil)))
@@ -109,6 +118,11 @@ two hostile identifiers cannot collapse onto one composite identity."
            (string= clean value)
            (string= value (string-trim value))
            value))))
+
+(defun hey-model--command-target-string (value)
+  "Return opaque VALUE when safe as a positional command target."
+  (let ((target (hey-model--opaque-string value)))
+    (and target (not (string-prefix-p "-" target)) target)))
 
 (defun hey-model--account-id-string (value)
   "Return VALUE as an account identity, including literal `all'."
@@ -225,6 +239,94 @@ holding non-fatal shape warnings."
                           values))))
     (list :value (nreverse values) :warnings (nreverse warnings))))
 
+(defun hey-model-normalize-auth-status (envelope)
+  "Normalize authentication-status ENVELOPE without retaining device data.
+
+Return `:value' as a `hey-auth-status' and `:warnings' for absent or unsafe
+fields.  Installation identifiers and all other authentication metadata are
+discarded at this boundary."
+  (let* ((data (hey-model--get "data" envelope))
+         (raw-authenticated (and (hey-model--object-p data)
+                                 (hey-model--get "authenticated" data)))
+         (authenticated (eq raw-authenticated t))
+         (account-id (and (hey-model--object-p data)
+                          (hey-model--account-id-string
+                           (hey-model--get "mail_account" data))))
+         warnings)
+    (unless (hey-model--object-p data)
+      (push "Envelope data is missing or not an authentication object."
+            warnings))
+    (when (and (hey-model--object-p data)
+               (not (memq raw-authenticated '(t hey-json-false))))
+      (push "Authentication status omitted an explicit boolean." warnings))
+    (when (and authenticated (not account-id))
+      (push "Authenticated status omitted a safe global account id." warnings))
+    (list :value (make-hey-auth-status
+                  :authenticated authenticated
+                  :account-id account-id)
+          :warnings (nreverse warnings))))
+
+(defun hey-model-normalize-version (envelope)
+  "Normalize version ENVELOPE without retaining build provenance details.
+
+Return `:value' as a `hey-version' and `:warnings' for absent or unsafe
+fields.  Commit, build date, and Go toolchain fields are deliberately
+discarded because the UI only needs the CLI version and its broad source."
+  (let* ((data (hey-model--get "data" envelope))
+         (version (and (hey-model--object-p data)
+                       (hey-model--opaque-string
+                        (hey-model--get "version" data))))
+         (source (and (hey-model--object-p data)
+                      (hey-model--clean-string
+                       (hey-model--get "source" data))))
+         warnings)
+    (unless (hey-model--object-p data)
+      (push "Envelope data is missing or not a version object." warnings))
+    (when (and (hey-model--object-p data) (not version))
+      (push "Version response omitted a safe version string." warnings))
+    (list :value (make-hey-version :version version :source source)
+          :warnings (nreverse warnings))))
+
+(defun hey-model--normalize-source-inventory (envelope account-id kind)
+  "Normalize source inventory ENVELOPE for ACCOUNT-ID and source KIND."
+  (let ((data (hey-model--array-data envelope))
+        (account (hey-model--account-id-string account-id))
+        values warnings)
+    (unless account
+      (push "Cannot normalize sources without a safe account id." warnings))
+    (if (eq data 'malformed)
+        (push "Envelope data is missing or not a source array." warnings)
+      (when account
+        (cl-loop for raw in data
+                 for index from 0
+                 for id = (hey-model--id-string (hey-model--get "id" raw))
+                 if (not id)
+                 do (push (hey-model--warning
+                           (symbol-name kind) index "missing or unsafe id")
+                          warnings)
+                 else
+                 do (let ((title (hey-model--clean-string
+                                  (hey-model--get "name" raw))))
+                      (push (make-hey-source
+                             :key (list kind account id)
+                             :kind kind
+                             :account-id account
+                             :id id
+                             :title title
+                             :continuation-kind 'cursor
+                             :consumed nil
+                             :exhausted nil)
+                            values)))))
+    (list :value (nreverse values) :warnings (nreverse warnings))))
+
+(defun hey-model-normalize-labels (envelope account-id)
+  "Normalize label-list ENVELOPE for ACCOUNT-ID into `hey-source' records."
+  (hey-model--normalize-source-inventory envelope account-id 'label))
+
+(defun hey-model-normalize-collections (envelope account-id)
+  "Normalize collection-list ENVELOPE for ACCOUNT-ID into `hey-source' records."
+  (hey-model--normalize-source-inventory envelope account-id 'collection))
+
 (defun hey-model-normalize-boxes (envelope account-id)
   "Normalize box-list ENVELOPE for ACCOUNT-ID into `hey-source' records.
 
@@ -242,7 +344,7 @@ Return a plist with `:value' and `:warnings'."
         (cl-loop for raw in data
                  for index from 0
                  for numeric-id = (hey-model--id-string (hey-model--get "id" raw))
-                 for box-kind = (hey-model--opaque-string
+                 for box-kind = (hey-model--command-target-string
                                   (hey-model--get "kind" raw))
                  for source-id = (or box-kind numeric-id)
                  if (not source-id)
@@ -395,15 +497,17 @@ list.  SOURCE itself is never mutated."
                (served (hey-model--get "page" meta))
                (page (if (and (integerp served) (> served 0))
                          served
-                       (or (hey-source-current-page source) 1))))
-          (when (member page consumed)
+                       (or (hey-source-current-page source) 1)))
+               (repeated (member page consumed)))
+          (when repeated
             (push "Search response repeated an already consumed page." warnings))
           (cl-pushnew page consumed :test #'equal)
           (setf (hey-source-current-page copy) page
                 (hey-source-consumed copy) consumed
                 (hey-source-continuation-kind copy) 'page
-                (hey-source-continuation copy) (and records (1+ page))
-                (hey-source-exhausted copy) (null records)))
+                (hey-source-continuation copy)
+                (and records (not repeated) (1+ page))
+                (hey-source-exhausted copy) (or repeated (null records))))
       (let* ((data (hey-model--get "data" envelope))
              (raw-next (and (hey-model--object-p data)
                             (hey-model--get "next_page" data)))
@@ -493,6 +597,7 @@ and `:warnings'.  SOURCE is not mutated."
          :sender (hey-model--contact-display raw)
          :timestamp (hey-model--clean-string (hey-model--get "created_at" raw))
          :body (if (stringp body) body "")
+         :summary (hey-model--clean-string (hey-model--get "summary" raw))
          :body-state (hey-model--body-state (hey-model--get "body_state" raw))
          :app-url (hey-model-validate-app-url (hey-model--get "app_url" raw)))))))
 
@@ -592,11 +697,21 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
         (propertize best 'help-echo full))))))
 
 (defun hey-model--row-memberships (posting max-width)
-  "Return a compact, distinguished membership cell for POSTING."
-  (let* ((labels (hey-model-format-memberships
-                  (hey-posting-labels posting) max-width))
+  "Return a compact membership cell for POSTING within MAX-WIDTH columns."
+  (let* ((label-records (hey-posting-labels posting))
+         (collection-records (hey-posting-collections posting))
+         (bounded (and (integerp max-width) (max 0 max-width)))
+         (both (and label-records collection-records))
+         (content-width (and bounded (max 0 (- bounded (if both 5 0)))))
+         (label-width (and content-width
+                           (if both (/ (+ (* content-width 3) 4) 5)
+                             content-width)))
+         (collection-width (and content-width
+                                (if both (- content-width label-width)
+                                  (max 0 (- content-width 2)))))
+         (labels (hey-model-format-memberships label-records label-width))
          (collections (hey-model-format-memberships
-                       (hey-posting-collections posting) max-width))
+                       collection-records collection-width))
          (cell
           (cond
            ((and (not (string-empty-p labels))
@@ -624,6 +739,9 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
                             (and (not (string-empty-p full-collections))
                                  (concat "Collections: " full-collections))))
                 "\n")))
+    (when (and bounded (> (string-width cell) bounded))
+      (setq cell (truncate-string-to-width
+                  cell bounded nil nil "…")))
     (if (string-empty-p help) cell (propertize cell 'help-echo help))))
 
 (defun hey-model-posting-row (posting layout)
@@ -650,7 +768,7 @@ not styled as unseen.  Memberships expose their complete values via
     (pcase layout
       ('wide
        (vector date sender subject-cell
-               (hey-model--row-memberships posting 32) summary))
+               (hey-model--row-memberships posting 28) summary))
       ('medium
        (vector date sender subject-cell
                (hey-model--row-memberships posting 24)))
@@ -718,18 +836,31 @@ account, origin, labels, and collections, followed by an optional notice."
       (push (hey-model--thread-field "Notice" (hey-thread-notice thread)) parts))
     (push "\n---\n" parts)
     (dolist (entry entries)
-      (push (format "\n## %s — %s\n\n"
-                    (hey-model--markdown-escape (hey-entry-sender entry))
-                    (hey-model--markdown-escape (hey-entry-timestamp entry)))
-            parts)
-      (let ((body (hey-entry-body entry)))
-        (push (if (and (stringp body) (not (string-empty-p body)))
-                  body
+      (let* ((entry-id (hey-entry-id entry))
+             (header (format "\n## %s — %s\n\n"
+                             (hey-model--markdown-escape
+                              (hey-entry-sender entry))
+                             (hey-model--markdown-escape
+                              (hey-entry-timestamp entry))))
+             (body (hey-entry-body entry))
+             (content
+              (cond
+               ((and (stringp body) (not (string-empty-p body))) body)
+               ((and (eq (hey-entry-body-state entry) 'bodyless)
+                     (not (string-empty-p (hey-entry-summary entry))))
+                (hey-model--markdown-escape (hey-entry-summary entry)))
+               (t
                 (format "*(%s)*"
                         (hey-model--body-state-description
-                         (hey-entry-body-state entry))))
-              parts))
-      (push "\n\n---\n" parts))
+                         (hey-entry-body-state entry))))))
+             (chunk (concat header content "\n\n---\n")))
+        ;; Text properties are the package-owned structural boundary.  They
+        ;; survive insertion into the thread buffer and cannot be forged by a
+        ;; Markdown heading inside CONTENT.
+        (add-text-properties 0 (length chunk)
+                             (list 'hey-entry-id entry-id) chunk)
+        (add-text-properties 0 1 '(hey-entry-start t) chunk)
+        (push chunk parts)))
     (apply #'concat (nreverse parts))))
 
 (provide 'hey-model)
