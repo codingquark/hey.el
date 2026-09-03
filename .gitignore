@@ -1,0 +1,6 @@
+.project-local.md
+dist/
+*.elc
+*-autoloads.el
+test/tmp/
+

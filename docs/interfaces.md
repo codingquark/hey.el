@@ -1,0 +1,103 @@
+# Frozen v1 internal interfaces
+
+This document freezes the seams needed for parallel Milestone 1 work. Changing
+one of these names or callback shapes requires an orchestrator-reviewed update
+before dependent work continues.
+
+## JSON representation
+
+The CLI layer parses JSON with string-keyed alists, lists for arrays, `nil` for
+JSON null, and the symbol `hey-json-false` for JSON false. Raw alists never
+cross into `hey.el`; model normalizers are the only consumers.
+
+## Model records
+
+`hey-model.el` provides these `cl-defstruct` types and generated accessors:
+
+- `hey-account`: `id name email all-p`
+- `hey-source`: `key kind account-id id title query continuation-kind
+  continuation consumed exhausted current-page`
+- `hey-membership`: `id name`
+- `hey-match`: `id sender timestamp summary app-url`
+- `hey-posting`: `key kind account-id id topic-id subject contacts summary
+  timestamp seen labels collections app-url matches original-index`
+- `hey-entry`: `id sender timestamp body body-state app-url`
+- `hey-thread`: `account-id account-name topic-id subject source-title senders
+  labels labels-known-p collections collections-known-p entries app-url notice`
+- `hey-error`: `category message code hint exit-status`
+
+Required public pure functions:
+
+- `hey-model-sanitize-metadata STRING`
+- `hey-model-validate-app-url STRING`
+- `hey-model-resolve-body-url STRING`
+- `hey-model-normalize-accounts ENVELOPE`
+- `hey-model-normalize-boxes ENVELOPE ACCOUNT-ID`
+- `hey-model-normalize-postings ENVELOPE SOURCE`
+- `hey-model-normalize-thread ENVELOPE CONTEXT`
+- `hey-model-envelope-notice ENVELOPE`
+- `hey-model-format-memberships MEMBERSHIPS MAX-WIDTH`
+- `hey-model-posting-row POSTING LAYOUT`
+- `hey-model-thread-markdown THREAD`
+
+`CONTEXT` for thread normalization is a plist containing only normalized
+origin data: `:account-id`, `:account-name`, `:topic-id`, `:subject`,
+`:source-title`, `:labels`, `:labels-known-p`, `:collections`, and
+`:collections-known-p`.
+
+Posting identities are `(ACCOUNT-ID POSTING-ID)` for box/bundle/label/
+collection results and `(ACCOUNT-ID TOPIC-ID)` for search. Malformed records
+missing the required ID are omitted and reported through a returned warning
+list rather than assigned a positional identity. Normalizers return a plist
+with `:value` and `:warnings` so malformed input remains non-fatal.
+
+## Command builders
+
+`hey-cli.el` provides pure builders returning argv without the executable:
+
+- `hey-cli-build-version`
+- `hey-cli-build-auth-status`
+- `hey-cli-build-account-list`
+- `hey-cli-build-box-list ACCOUNT-ID`
+- `hey-cli-build-box-view ACCOUNT-ID BOX &optional PAGE`
+- `hey-cli-build-bundle-view ACCOUNT-ID POSTING-ID &optional PAGE`
+- `hey-cli-build-search ACCOUNT-ID QUERY &optional PAGE`
+- `hey-cli-build-thread-read ACCOUNT-ID TOPIC-ID`
+- `hey-cli-build-label-list ACCOUNT-ID`
+- `hey-cli-build-label-view ACCOUNT-ID LABEL-ID &optional PAGE`
+- `hey-cli-build-collection-list ACCOUNT-ID`
+- `hey-cli-build-collection-view ACCOUNT-ID COLLECTION-ID &optional PAGE`
+
+All builders pin the exact official origin and add `--json`. Account-sensitive
+builders add an explicit account. Search emits every flag before `-- QUERY`.
+IDs and cursors are validated data strings; no public generic builder exists.
+
+## Async transport
+
+The UI calls named functions with this common tail:
+
+```elisp
+(OWNER SOURCE-KEY GENERATION SUCCESS FAILURE)
+```
+
+Operation-specific arguments precede that tail. `SUCCESS` receives one parsed
+success envelope. `FAILURE` receives one `hey-error`. Completion happens at
+most once and only while `OWNER` is live. UI source/generation matching remains
+the UI's final commit check as well.
+
+Named functions mirror every builder, without `build-`, for example
+`hey-cli-box-view` and `hey-cli-thread-read`. The private
+`hey-cli--start-process` is the only real subprocess primitive. Tests and the
+fake-backed prototype replace named operations, never the private primitive.
+
+## UI session state
+
+List buffers hold buffer-local `hey--account`, `hey--source`, `hey--records`,
+`hey--generation`, `hey--request`, `hey--loading`, `hey--stale`,
+`hey--last-refreshed`, and `hey--error`. Thread buffers hold one normalized
+thread plus an origin plist. Public buffer names never contain subjects or
+queries.
+
+The UI has one `hey--refresh` funnel and one `hey-display-buffer` funnel. It
+uses only normalized records and named CLI operations.
+
