@@ -79,12 +79,14 @@ their only distinction.
 Posting-list dates are rendered in the user's local time as `Today HH:MM`,
 `Yesterday HH:MM`, or `YYYY-MM-DD` for older valid timestamps.  Missing
 timestamps stay blank and malformed timestamps retain their sanitized source
-text; thread timestamps are unchanged.  Subject width consumes the space
-available in each responsive layout.  When none of the currently loaded rows
-has a label or collection, the memberships column is omitted and its space is
-given to the subject; at wide and medium breakpoints it returns when a loaded
-row has membership data.  Narrow layouts omit memberships to preserve usable
-subject width.  The list does not add date grouping or package-branded colors.
+text; thread timestamps are unchanged.  In the wide layout, Subject and
+Summary split their flexible space three-to-two and both truncate visually
+with their complete text available as help.  When none of the currently loaded
+rows has a label or collection, the memberships column is omitted and its
+space is shared by those two columns; at wide and medium breakpoints it returns
+when a loaded row has membership data.  Medium and narrower layouts continue
+to prioritize subject width.  The list does not add date grouping or
+package-branded colors.
 
 Run `M-x customize-group RET hey` to adjust the package options and faces,
 including the current-row highlight.  Theme authors can customize

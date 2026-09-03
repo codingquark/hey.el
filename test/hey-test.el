@@ -225,7 +225,7 @@
       (hey--resize-buffer width)
       (should (= (hey-test--configured-table-width) width)))))
 
-(ert-deftest hey-ui-empty-memberships-give-their-width-to-subject ()
+(ert-deftest hey-ui-empty-memberships-expand-the-flexible-columns ()
   (hey-test-with-list
     (let ((raw (copy-tree
                 (hey-test--posting 501 901
@@ -243,7 +243,9 @@
       (should (equal (mapcar #'car (append tabulated-list-format nil))
                      '("Date" "Sender" "Subject" "Summary")))
       (should (= (length (cadar (hey--tabulated-entries))) 4))
-      (should (= (hey-test--column-width "Subject") 71)))))
+      (should (= (hey-test--column-width "Subject") 55))
+      (should (= (hey-test--column-width "Summary") 36))
+      (should (= (hey-test--configured-table-width) 130)))))
 
 (ert-deftest hey-ui-populated-memberships-retain-their-column ()
   (hey-test-with-list
@@ -258,7 +260,54 @@
                    '("Date" "Sender" "Subject"
                      "Labels / collections" "Summary")))
     (should (= (length (cadar (hey--tabulated-entries))) 5))
-    (should (= (hey-test--column-width "Subject") 50))))
+    (should (= (hey-test--column-width "Subject") 42))
+    (should (= (hey-test--column-width "Summary") 28))
+    (should (= (hey-test--configured-table-width) 130))))
+
+(ert-deftest hey-ui-wide-layout-splits-flexible-width-three-to-two ()
+  (hey-test-with-list
+    (let ((raw (copy-tree (hey-test--posting 501 901 "Subject"))))
+      (setf (alist-get "folders" raw nil nil #'equal) nil
+            (alist-get "collections" raw nil nil #'equal) nil)
+      (setq hey--records
+            (plist-get (hey-model-normalize-postings
+                        (hey-test--postings-envelope (list raw))
+                        hey--source)
+                       :value))
+      (hey--render-list nil 200)
+      (should (= (hey-test--column-width "Subject") 97))
+      (should (= (hey-test--column-width "Summary") 64))
+      (should (= (hey-test--configured-table-width) 200)))))
+
+(ert-deftest hey-ui-wide-layout-truncates-both-flexible-cells-with-help ()
+  (hey-test-with-list
+    (let* ((subject (make-string 120 ?S))
+           (summary (make-string 120 ?M))
+           (raw (copy-tree (hey-test--posting 501 901 subject))))
+      (setf (alist-get "summary" raw nil nil #'equal) summary
+            (alist-get "folders" raw nil nil #'equal) nil
+            (alist-get "collections" raw nil nil #'equal) nil)
+      (setq hey--records
+            (plist-get (hey-model-normalize-postings
+                        (hey-test--postings-envelope (list raw))
+                        hey--source)
+                       :value))
+      (hey--render-list nil 130)
+      (let* ((row (cadar (hey--tabulated-entries)))
+             (subject-index
+              (cl-position "Subject" tabulated-list-format
+                           :key #'car :test #'equal))
+             (summary-index
+              (cl-position "Summary" tabulated-list-format
+                           :key #'car :test #'equal))
+             (subject-cell (aref row subject-index))
+             (summary-cell (aref row summary-index)))
+        (should (= (string-width subject-cell) 55))
+        (should (= (string-width summary-cell) 36))
+        (should (equal (get-text-property 0 'help-echo subject-cell)
+                       (concat "Subject: ● " subject)))
+        (should (equal (get-text-property 0 'help-echo summary-cell)
+                       (concat "Summary: " summary)))))))
 
 (ert-deftest hey-ui-bundle-annotation-survives-column-projection ()
   (hey-test-with-list

@@ -156,6 +156,12 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
                 (date "Date" 16))))
   "Column fields, titles, and preferred widths for each list layout.")
 
+(defconst hey--wide-subject-share 3
+  "Subject shares of flexible space in the wide list layout.")
+
+(defconst hey--wide-flex-shares 5
+  "Total shares of flexible space in the wide list layout.")
+
 (defun hey--call (operation &rest arguments)
   "Call named CLI OPERATION with ARGUMENTS.
 
@@ -254,25 +260,51 @@ posting, and at the narrow breakpoint where Subject takes priority."
 (defun hey--column-format (layout columns width)
   "Return a tabulated-list format for LAYOUT's COLUMNS at WIDTH.
 
-Subject receives the available width after reserving the other columns."
+Wide layouts split flexible space three-to-two between Subject and Summary.
+Other layouts give Subject the space left after reserving fixed columns."
   (let* ((layout-columns (alist-get layout hey--list-layouts))
          (subject-base (nth 2 (assq 'subject layout-columns)))
-         (non-subject-width
+         (summary-column (assq 'summary columns))
+         (summary-base (and summary-column (nth 2 summary-column)))
+         (fixed-width
           (cl-loop for (field _title preferred) in columns
-                   unless (eq field 'subject)
+                   unless (memq field '(subject summary))
                    sum preferred))
          (inter-column-padding (max 0 (1- (length columns))))
          (available (- width tabulated-list-padding inter-column-padding
-                       non-subject-width))
-         (subject-width (max subject-base available)))
+                       fixed-width))
+         (subject-width
+          (if summary-column
+              (max subject-base
+                   (min (- available summary-base)
+                        (ceiling (* available hey--wide-subject-share)
+                                 hey--wide-flex-shares)))
+            (max subject-base available)))
+         (summary-width (and summary-column (- available subject-width))))
     (vconcat
      (mapcar (lambda (column)
                (pcase-let ((`(,field ,title ,preferred) column))
-                 (list title (if (eq field 'subject)
-                                 subject-width
-                               preferred)
+                 (list title (pcase field
+                               ('subject subject-width)
+                               ('summary summary-width)
+                               (_ preferred))
                        nil)))
              columns))))
+
+(defun hey--fit-list-cell (value title width)
+  "Fit string VALUE to WIDTH for list column TITLE.
+
+When truncation is necessary, retain VALUE without text properties in the
+cell's help text."
+  (if (<= (string-width value) width)
+      value
+    (let ((display (truncate-string-to-width value width nil nil t)))
+      (add-text-properties
+       0 (length display)
+       `(help-echo ,(format "%s: %s" title
+                            (substring-no-properties value)))
+       display)
+      display)))
 
 (defun hey--configure-columns (&optional width)
   "Configure list columns for WIDTH and return non-nil when they changed."
@@ -306,7 +338,14 @@ Subject receives the available width after reserving the other columns."
      (cl-loop for column in layout-columns
               for value across row
               when (assq (car column) hey--columns)
-              collect value))))
+              collect
+              (let* ((field (car column))
+                     (visible-index
+                      (cl-position field hey--columns :key #'car))
+                     (format (aref tabulated-list-format visible-index)))
+                (if (memq field '(subject summary))
+                    (hey--fit-list-cell value (car format) (cadr format))
+                  value))))))
 
 (defun hey--tabulated-entries ()
   "Return tabulated entries from buffer-local normalized records."

@@ -21,7 +21,8 @@ All notable changes to this project will be documented in this file.
 - Humanize posting-list dates in local time as today, yesterday, or an ISO
   calendar date while retaining safe fallbacks for missing and malformed
   timestamps.
-- Allocate responsive list width to subjects and omit the memberships column
-  when every loaded row has no memberships.
+- Split wide-layout flexible width three-to-two between Subject and Summary,
+  truncate both with complete help text, and omit the memberships column when
+  every loaded row has no memberships.
 - Generate package descriptors from `hey.el` metadata instead of tracking
   `hey-pkg.el`, matching MELPA packaging conventions.
