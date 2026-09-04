@@ -43,7 +43,8 @@
   `hey-highlight-current-row` as the public opt-out.
 - Render valid posting-list timestamps in local time as `Today HH:MM`,
   `Yesterday HH:MM`, or `YYYY-MM-DD`, preserving sanitized malformed text and
-  blank missing values while leaving thread timestamps unchanged.
+  blank missing values while leaving thread timestamps unchanged. Leave a
+  bundle date blank when the row has no single readable topic.
 - Split wide-layout flexible width three-to-two between Subject and Summary,
   truncate both with complete help text, and omit an all-empty memberships
   column until a loaded row contains a label or collection; continue to
@@ -131,6 +132,15 @@ Move an item to active work when starting it; remove it when complete.
   date grouping and new branded colors remain intentionally excluded.
 - The user approved bounded three-to-two Subject/Summary allocation after
   wide-screen dogfood showed that either unbounded field could dominate a row.
+- Dogfood exposed bundle rows whose joined subjects outlived the aggregate
+  posting timestamp and whose unseen-only expansion returned no rows. Bundle
+  rows without one readable topic now omit the misleading date and use the CLI
+  1.4.0 read-only contact-thread source when a contact ID is present; the
+  unseen-only bundle source remains the safe fallback.
+- Bundle correction packet: `make check` passed from `main` under the local
+  Emacs 31.1 build (103/103 ERT, strict compile, lint, read-only audit, package,
+  install). The package artifact has SHA-256
+  `c9a140c51b541d78e7b48b656727c4989fa228e74d822720715dee63f2b16641`.
 - The CLI search command serializes `id`, `topic_id`, `subject`, `updated_at`,
   and matching `messages` only, so search results have no authoritative `seen`
   field. Applying the true-only rule there showed every search hit as unseen,

@@ -182,12 +182,30 @@
                    "https://app.hey.com/topics/901"))
     (should (eq (hey-posting-kind bundle) 'bundle))
     (should-not (hey-posting-topic-id bundle))
+    (should (equal (hey-posting-contact-id bundle) "51"))
     (should (eq (hey-posting-seen bundle) 'unseen))
     (should-not (hey-posting-app-url bundle))
     (should (equal (hey-source-continuation updated) "cursor-2"))
     (should-not (hey-source-exhausted updated))
     ;; The model API is pure: response pagination updates a copy.
     (should-not (hey-source-continuation source))))
+
+(ert-deftest hey-model-omits-an-aggregate-bundle-date-from-list-rows ()
+  (let* ((source (make-hey-source :kind 'box :account-id "101"))
+         (posting (cadr
+                   (plist-get
+                    (hey-model-normalize-postings
+                     (hey-model-test--fixture "postings-adversarial.json")
+                     source)
+                    :value))))
+    (should (equal (hey-posting-timestamp posting)
+                   "2025-11-27T10:00:00Z"))
+    (should (equal (aref (hey-model-posting-row posting 'wide) 0) "")))
+  (let ((posting (make-hey-posting
+                  :kind 'bundle :topic-id "901"
+                  :timestamp "2025-11-27T10:00:00Z")))
+    (should (equal (aref (hey-model-posting-row posting 'wide) 0)
+                   "2025-11-27T10:00:00Z"))))
 
 (ert-deftest hey-model-separates-command-targets-from-opaque-cursors ()
   (let* ((source (make-hey-source :kind 'box :account-id "101"))
@@ -208,7 +226,7 @@
     (should (plist-get box-result :warnings))))
 
 (ert-deftest hey-model-normalizes-every-cursor-source-with-one-contract ()
-  (dolist (kind '(box bundle label collection))
+  (dolist (kind '(box bundle contact-threads label collection))
     (let* ((source (make-hey-source
                     :key (list kind "101" "source")
                     :kind kind :account-id "101" :id "source"

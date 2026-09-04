@@ -43,6 +43,11 @@
              (hey-cli-build-bundle-view "account-17" "posting-3" "cursor/4?x=y")
              (append prefix '("bundle" "view" "posting-3"
                               "--page" "cursor/4?x=y" "--json"))))
+    (should (equal
+             (hey-cli-build-contact-threads
+              "account-17" "contact-4" "cursor/5?x=y")
+             (append prefix '("contact" "threads" "contact-4"
+                              "--page" "cursor/5?x=y" "--json"))))
     (should (equal (hey-cli-build-thread-read "account-17" "topic-5")
                    (append prefix '("thread" "read" "topic-5"
                                     "--allow-partial" "--json"))))
@@ -69,11 +74,13 @@
   (dolist (value '(nil "" "line\nbreak" "nul\0byte"))
     (should-error (hey-cli-build-box-list value))
     (should-error (hey-cli-build-box-view "account-17" value))
+    (should-error (hey-cli-build-contact-threads "account-17" value))
     (should-error (hey-cli-build-thread-read "account-17" value)))
   (should-error (hey-cli-build-box-view "account-17" "imbox" ""))
   (dolist (value '("--help" "-1"))
     (should-error (hey-cli-build-box-view "account-17" value))
     (should-error (hey-cli-build-bundle-view "account-17" value))
+    (should-error (hey-cli-build-contact-threads "account-17" value))
     (should-error (hey-cli-build-thread-read "account-17" value))
     (should-error (hey-cli-build-label-view "account-17" value))
     (should-error (hey-cli-build-collection-view "account-17" value)))
@@ -90,7 +97,7 @@
                      "move" "bubble" "trash" "spam" "ignore" "share"
                      "unshare" "approve" "deny" "add" "create" "update"
                      "delete" "remove" "send")))
-    (should (= (length builders) 12))
+    (should (= (length builders) 13))
     (dolist (builder builders)
       (let ((name (symbol-name builder)))
         (dolist (verb forbidden)

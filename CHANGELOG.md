@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Leave the date blank for bundle rows without one readable topic because one
+  aggregate timestamp does not describe every joined subject.  Open them
+  through the contact's read-only thread list when possible, including mail
+  that the unseen-only bundle endpoint no longer returns.
 - Show `[Load more]` below lists with another page.  `RET` or mouse-2 activates
   the control; `M` remains available.  The control hides during requests and
   after exhaustion, and activation keeps point on the last loaded row.

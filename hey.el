@@ -518,6 +518,10 @@ the named operation's result."
      (hey--call 'hey-cli-bundle-view (hey-source-account-id source)
                 (hey-source-id source) page owner source-key generation
                 success failure))
+    ('contact-threads
+     (hey--call 'hey-cli-contact-threads (hey-source-account-id source)
+                (hey-source-id source) page owner source-key generation
+                success failure))
     ('search
      (hey--call 'hey-cli-search (hey-source-account-id source)
                 (hey-source-query source) page owner source-key generation
@@ -1015,12 +1019,17 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
            (null (hey-posting-topic-id posting)))
       (let* ((account hey--account)
              (account-id (hey-account-id account))
+             (contact-id (hey-posting-contact-id posting))
              (origin (hey--origin-for posting))
              (overrides hey--operation-overrides)
              (source (make-hey-source
-                      :key (list 'bundle account-id (hey-posting-id posting))
-                      :kind 'bundle :account-id account-id
-                      :id (hey-posting-id posting) :title "Bundle"
+                      :key (list (if contact-id 'contact-threads 'bundle)
+                                 account-id
+                                 (or contact-id (hey-posting-id posting)))
+                      :kind (if contact-id 'contact-threads 'bundle)
+                      :account-id account-id
+                      :id (or contact-id (hey-posting-id posting))
+                      :title "Bundle"
                       :continuation-kind 'cursor))
              (buffer (get-buffer-create
                       (hey--bundle-buffer-name

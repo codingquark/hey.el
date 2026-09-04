@@ -76,7 +76,8 @@
 KIND is the symbol `bundle' for a bundle row and `thread' otherwise.  SEEN is
 `seen' or `unseen' for sources which report read state, and `unknown' for
 sources such as search which do not."
-  key kind account-id id topic-id subject contacts summary timestamp seen
+  key kind account-id id topic-id contact-id subject contacts summary timestamp
+  seen
   labels collections app-url matches original-index)
 
 (cl-defstruct hey-entry
@@ -431,6 +432,17 @@ Return a plist with `:value' and `:warnings'."
             (push (make-hey-membership :id id :name name) memberships)))))
     (nreverse memberships)))
 
+(defun hey-model--posting-contact-id (raw)
+  "Return the first safe contact ID represented by RAW, or nil."
+  (let ((creator (hey-model--get "creator" raw))
+        (contacts (hey-model--get "contacts" raw)))
+    (or (and (hey-model--object-p creator)
+             (hey-model--id-string (hey-model--get "id" creator)))
+        (and (hey-model--array-p contacts)
+             (cl-loop for contact in contacts
+                      thereis (hey-model--id-string
+                               (hey-model--get "id" contact)))))))
+
 (defun hey-model--seen-state (raw)
   "Return `seen' only when RAW is t, and `unseen' otherwise."
   (if (eq raw t) 'seen 'unseen))
@@ -478,6 +490,8 @@ Return a plist with `:value' and `:warnings'."
          :account-id account-id
          :id id
          :topic-id topic-id
+         :contact-id (unless search-p
+                       (hey-model--posting-contact-id raw))
          :subject (hey-model--clean-string
                    (hey-model--get (if search-p "subject" "name") raw))
          :contacts (if search-p
@@ -818,7 +832,12 @@ complete values via `help-echo'."
           (if (eq (hey-posting-seen posting) 'unseen)
               (propertize (concat "● " subject) 'face 'hey-unseen-face)
             subject))
-         (date (hey-posting-timestamp posting))
+         ;; A bundle without one topic is an aggregate, so its timestamp does
+         ;; not describe every subject joined in the row.
+         (date (if (and (eq (hey-posting-kind posting) 'bundle)
+                        (null (hey-posting-topic-id posting)))
+                   ""
+                 (hey-posting-timestamp posting)))
          (sender (hey-posting-contacts posting))
          (summary (hey-posting-summary posting)))
     (pcase layout

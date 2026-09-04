@@ -763,6 +763,45 @@
         (should-not (get-buffer "*HEY bundle: 101/502*<2>"))
         (kill-buffer bundle-buffer)))))
 
+(ert-deftest hey-ui-bundle-with-contact-opens-seen-and-unseen-threads ()
+  (save-window-excursion
+    (hey-test-with-list
+      (let* ((raw (hey-test--posting 502 nil "Bundle" "bundle"))
+             (origin-buffer (current-buffer))
+             (calls 0)
+             bundle-buffer)
+        (setcdr (assoc-string "creator" raw)
+                '(("id" . 51) ("name" . "Synthetic Sender")))
+        (setq hey--records
+              (plist-get
+               (hey-model-normalize-postings
+                (hey-test--postings-envelope (list raw)) hey--source)
+               :value)
+              hey--operation-overrides
+              `((hey-cli-contact-threads
+                 . ,(lambda (_account contact-id _page _owner _key _generation success _failure)
+                      (should (equal contact-id "51"))
+                      (cl-incf calls)
+                      (funcall
+                       success
+                       (hey-test--postings-envelope
+                        (list (hey-test--posting
+                               510 910 "Contained thread"))))))
+                (hey-cli-bundle-view
+                 . ,(lambda (&rest _arguments)
+                      (ert-fail "Bundle unseen fallback was used")))))
+        (hey--render-list)
+        (hey-open)
+        (setq bundle-buffer (current-buffer))
+        (should (equal (buffer-name) "*HEY bundle: 101/502*"))
+        (should (eq (hey-source-kind hey--source) 'contact-threads))
+        (should (= calls 1))
+        (should (= (length hey--records) 1))
+        (should (equal (hey-posting-topic-id (car hey--records)) "910"))
+        (with-current-buffer origin-buffer
+          (should (eq (hey-posting-kind (car hey--records)) 'bundle)))
+        (kill-buffer bundle-buffer)))))
+
 (ert-deftest hey-ui-thread-rendering-keeps-entry-properties-and-navigation ()
   (save-window-excursion
     (hey-test-with-list

@@ -15,9 +15,9 @@ The project is maintained at <https://github.com/codingquark/hey.el>.
 Authentication is owned by the HEY CLI.  The package does not accept or store
 bearer tokens.
 
-Box, bundle, label, and collection postings count as seen only when the CLI
-returns literal JSON `true` in their `seen` field; `false`, `null`, a missing
-field, or any other value is unseen.  Search results carry no
+Box, bundle, contact-thread, label, and collection postings count as seen only
+when the CLI returns literal JSON `true` in their `seen` field; `false`, `null`,
+a missing field, or any other value is unseen.  Search results carry no
 authoritative `seen` field, so they are presented as neither seen nor unseen.
 
 ## Installation
@@ -86,6 +86,11 @@ including the current-row highlight.  Theme authors can customize
 `hey-metadata-label-face`, `hey-status-face`, `hey-warning-face`, and
 `hey-error-face` without replacing the list, header-line, or Markdown faces
 owned by their respective modes.
+
+Bundle rows without one readable topic leave their date blank: the CLI
+supplies one timestamp for the aggregate, not an authoritative time for every
+subject joined in that row.  `RET` uses the bundle contact's read-only thread
+list when available, so already-read bundled mail remains reachable.
 
 When the current source has another page ready, the list offers `[Load more]`
 at the bottom of the table; push it with `RET` or mouse-2, or press `M`.  The

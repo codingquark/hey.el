@@ -20,16 +20,16 @@ cross into `hey.el`; model normalizers are the only consumers.
   continuation consumed exhausted current-page`
 - `hey-membership`: `id name`
 - `hey-match`: `id sender timestamp summary app-url`
-- `hey-posting`: `key kind account-id id topic-id subject contacts summary
-  timestamp seen labels collections app-url matches original-index`
+- `hey-posting`: `key kind account-id id topic-id contact-id subject contacts
+  summary timestamp seen labels collections app-url matches original-index`
 - `hey-entry`: `id sender timestamp body summary body-state app-url`
 - `hey-thread`: `account-id account-name topic-id subject source-title senders
   labels labels-known-p collections collections-known-p entries app-url notice`
 - `hey-error`: `category message code hint exit-status`
 
-Posting read state is source-specific. Box, bundle, label, and collection
-postings are binary: the model normalizes a posting to `seen` only when the
-CLI's `seen` field is literal JSON `true`; JSON `false`, `null`, a missing
+Posting read state is source-specific. Box, bundle, contact-thread, label, and
+collection postings are binary: the model normalizes a posting to `seen` only
+when the CLI's `seen` field is literal JSON `true`; JSON `false`, `null`, a missing
 field, or any other value normalizes to `unseen`. Search results carry no
 authoritative `seen` field, so a search posting always normalizes to `unknown`
 even when a stray `seen` value is present. Only explicit `unseen` receives the
@@ -72,8 +72,8 @@ origin data: `:account-id`, `:account-name`, `:topic-id`, `:subject`,
 `:source-title`, `:labels`, `:labels-known-p`, `:collections`, and
 `:collections-known-p`.
 
-Posting identities are `(ACCOUNT-ID POSTING-ID)` for box/bundle/label/
-collection results and `(ACCOUNT-ID TOPIC-ID)` for search. Malformed records
+Posting identities are `(ACCOUNT-ID POSTING-ID)` for box/bundle/contact-thread/
+label/collection results and `(ACCOUNT-ID TOPIC-ID)` for search. Malformed records
 missing the required ID are omitted and reported through a returned warning
 list rather than assigned a positional identity. Normalizers return a plist
 with `:value` and `:warnings` so malformed input remains non-fatal.
@@ -88,6 +88,7 @@ with `:value` and `:warnings` so malformed input remains non-fatal.
 - `hey-cli-build-box-list ACCOUNT-ID`
 - `hey-cli-build-box-view ACCOUNT-ID BOX &optional PAGE`
 - `hey-cli-build-bundle-view ACCOUNT-ID POSTING-ID &optional PAGE`
+- `hey-cli-build-contact-threads ACCOUNT-ID CONTACT-ID &optional PAGE`
 - `hey-cli-build-search ACCOUNT-ID QUERY &optional PAGE`
 - `hey-cli-build-thread-read ACCOUNT-ID TOPIC-ID`
 - `hey-cli-build-label-list ACCOUNT-ID`

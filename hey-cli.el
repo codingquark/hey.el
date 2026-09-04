@@ -178,6 +178,15 @@ explicit `--' delimiter."
            (when page
              (list "--page" (hey-cli--data-string page "Page cursor"))))))
 
+(defun hey-cli-build-contact-threads (account-id contact-id &optional page)
+  "Build argv for reading CONTACT-ID threads in ACCOUNT-ID at PAGE cursor."
+  (hey-cli--finish-argv
+   (append (hey-cli--account-argv account-id)
+           (list "contact" "threads"
+                 (hey-cli--positional-string contact-id "Contact ID"))
+           (when page
+             (list "--page" (hey-cli--data-string page "Page cursor"))))))
+
 (defun hey-cli-build-search (account-id query &optional page)
   "Build argv for searching ACCOUNT-ID for QUERY, optionally at PAGE.
 
@@ -843,6 +852,16 @@ PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
   (hey-cli--start-process 'bundle-view
                           (hey-cli-build-bundle-view account-id posting-id page)
                           owner source-key generation success failure))
+
+(defun hey-cli-contact-threads
+    (account-id contact-id page owner source-key generation success failure)
+  "Read CONTACT-ID threads in ACCOUNT-ID for OWNER, tagged by request state.
+
+PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
+  (hey-cli--start-process
+   'contact-threads
+   (hey-cli-build-contact-threads account-id contact-id page)
+   owner source-key generation success failure))
 
 (defun hey-cli-search
     (account-id query page owner source-key generation success failure)

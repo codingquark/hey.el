@@ -19,6 +19,7 @@
     (hey-cli-box-list . hey-cli-build-box-list)
     (hey-cli-box-view . hey-cli-build-box-view)
     (hey-cli-bundle-view . hey-cli-build-bundle-view)
+    (hey-cli-contact-threads . hey-cli-build-contact-threads)
     (hey-cli-search . hey-cli-build-search)
     (hey-cli-thread-read . hey-cli-build-thread-read)
     (hey-cli-label-list . hey-cli-build-label-list)

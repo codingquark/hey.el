@@ -83,6 +83,7 @@ Only endpoint-specific wrappers for these operations should exist:
 - `hey box list --json`
 - `hey box view ... --json`
 - `hey bundle view ... --json`
+- `hey contact threads ... --json`
 - `hey search ... --json`
 - `hey thread read <topic_id> --allow-partial --json`
 - `hey label list --json`
@@ -93,12 +94,14 @@ Only endpoint-specific wrappers for these operations should exist:
 `thread read` is a GET-only read path. Seen state has a separate POST endpoint,
 so opening a thread in `hey` must not mark it seen. `bundle view` is admitted
 because ordinary box results can contain bundle rows with no `topic_id`; it is
-the read-only route to those rows' unseen child threads.
+the read-only route to those rows' unseen child threads. `contact threads` is
+the read-only route to the sender's seen and unseen mail, including after the
+unseen route is empty.
 
-Other additive 1.4.0 read surfaces—`contact threads`, specialized
-`set-aside` views, `search filters`, Screener history/listing, and attachment
-metadata—stay deferred. A future milestone must add each one explicitly rather
-than widening the generic runner.
+Other additive 1.4.0 read surfaces—specialized `set-aside` views, `search
+filters`, Screener history/listing, and attachment metadata—stay deferred. A
+future milestone must add each one explicitly rather than widening the generic
+runner.
 
 ### Explicitly excluded from the first release
 
@@ -223,21 +226,23 @@ the normalization boundary.
 ### Source
 
 - immutable source key derived from kind/account/source/query;
-- kind: box, bundle, search, label, or collection;
+- kind: box, bundle, contact-threads, search, label, or collection;
 - account ID;
 - stable source ID/name; for boxes, command argv uses the CLI `kind` slug or
   numeric ID while the human `name` is display-only;
 - display title;
 - search query/filter data held only in memory;
 - continuation kind and value: an opaque `next_page` string for box, bundle,
-  label, and collection views, or the next positive integer page for search;
+  contact-thread, label, and collection views, or the next positive integer
+  page for search;
 - set of continuation values already consumed, for loop detection;
 - exhausted flag.
 
 Pagination is scroll-oriented extension, not page flipping: “load more” uses
 the source's continuation contract and appends another response. Box, bundle,
-label, and collection views pass the returned opaque `next_page` value back
-through `--page`; search generates the next positive integer `--page` value.
+contact-thread, label, and collection views pass the returned opaque
+`next_page` value back through `--page`; search generates the next positive
+integer `--page` value.
 Refresh returns to the first response/page and replaces the accumulated
 records. There is no previous-page stack.
 
@@ -248,6 +253,7 @@ records. There is no previous-page stack.
 - optional posting `id` (search results can omit it when no active box item
   exists);
 - optional thread `topic_id` (a bundled box posting can omit it);
+- optional contact ID for read-only bundle fallback;
 - subject;
 - normalized contacts/sender display;
 - summary/snippet;
@@ -272,13 +278,14 @@ separate containment path and is never treated as trusted metadata.
 
 Posting ID and topic ID must never be inferred from or substituted for one
 another. `thread read` accepts `topic_id` only; passing a posting `id` returns a
-`not_found` error. A bundled posting without `topic_id` opens a nested
-`bundle view` list using its posting `id`, and only a child posting with a
-`topic_id` can open a thread.
+`not_found` error. A bundled posting without `topic_id` opens the contact's
+read-only, seen-and-unseen thread list when the posting supplies a contact ID.
+Otherwise it opens the unseen-only `bundle view` list using its posting ID.
+Only a child posting with a `topic_id` can open a thread.
 
 Composite row identities are exact:
 
-- ordinary box, bundle, label, and collection postings use
+- ordinary box, bundle, contact-thread, label, and collection postings use
   `(account-id posting-id)` and reject rows without a posting ID;
 - search rows use `(account-id topic-id)` and reject rows without a topic ID;
 - the literal `all` account filter remains part of identity, because the CLI
@@ -289,7 +296,8 @@ Composite row identities are exact:
 
 Normalization is source-specific:
 
-- box, bundle, label, and collection postings map `name` to subject and use
+- box, bundle, contact-thread, label, and collection postings map `name` to
+  subject and use
   their posting-level contacts, summary, timestamps, seen state, labels,
   collection memberships, and app URL;
 - search maps `subject` directly, requires `topic_id`, treats posting `id` as
@@ -601,14 +609,17 @@ Rules:
   presentation, so a literal JSON `true` `seen` value and `unknown` read state
   both render without it;
 - valid posting-list timestamps render in the user's local time as
-  `Today HH:MM`, `Yesterday HH:MM`, or `YYYY-MM-DD` for older dates; missing
-  values remain blank, an unparseable value falls back to its sanitized source
-  text, and thread timestamps remain unchanged; the UI supplies one explicit
-  clock snapshot to the pure model formatter for each complete list render;
+  `Today HH:MM`, `Yesterday HH:MM`, or `YYYY-MM-DD` for older dates; bundle rows
+  without one readable topic leave the date blank because one aggregate time
+  cannot describe every joined subject; other missing values remain blank, an
+  unparseable value falls back to its sanitized source text, and thread
+  timestamps remain unchanged; the UI supplies one explicit clock snapshot to
+  the pure model formatter for each complete list render;
 - one logical posting per row;
-- a bundled posting without `topic_id` is shown distinctly and opens its
-  read-only `bundle view` child list; external URL handoff remains available
-  when the posting supplies a valid application URL;
+- a bundled posting without `topic_id` is shown distinctly and opens the
+  contact's read-only, seen-and-unseen thread list when possible; the
+  unseen-only `bundle view` remains the fallback. External URL handoff remains
+  available when the posting supplies a valid application URL;
 - full sender, subject, and summary values remain available through row
   help/details when visually truncated; `/` performs server search rather than
   pretending local isearch can inspect text that was not inserted;
@@ -792,9 +803,9 @@ not rearrange unrelated user windows unexpectedly.
 - A refresh re-fetches the first response for the current
   account/source/query—not the default Imbox—and replaces accumulated rows
   only after success.
-- For box, bundle, label, and collection views, `M` consumes the response's
-  opaque `next_page` value and appends records. Accept only a cursor returned by
-  the current source session.
+- For box, bundle, contact-thread, label, and collection views, `M` consumes the
+  response's opaque `next_page` value and appends records. Accept only a cursor
+  returned by the current source session.
 - For search, accept the current page reported in envelope metadata and
   generate the next positive integer `--page`; search does not return or use an
   opaque cursor. An empty result page definitively exhausts the source. `--all`
