@@ -13,8 +13,9 @@
 ;; Exact, read-only command builders and the asynchronous process boundary for
 ;; the HEY reader.  This library intentionally has no generic public command
 ;; runner: only the named operations at the end of this file can start a
-;; subprocess.  In posting responses, only a literal JSON true `seen' value
-;; means read; false, null, a missing field, or any other value means unread.
+;; subprocess.  In box, bundle, label, and collection posting responses, only a
+;; literal JSON true `seen' value means read; false, null, a missing field, or
+;; any other value means unread.  Search result rows carry no read state.
 
 ;;; Code:
 

@@ -31,8 +31,11 @@
 - Show summary text only in the wide list layout; progressively remove it at
   narrower breakpoints.
 - Show compact labels and collections with the complete values in help text.
-- Mark unseen rows with a leading dot and bold subject. A posting is seen iff
-  the CLI's `seen` field is literal JSON `true`; every other value is unseen.
+- Mark unseen rows with a leading dot and bold subject. A posting from a source
+  that reports read state is seen iff the CLI's `seen` field is literal JSON
+  `true`; every other value is unseen. Search results have no authoritative
+  `seen` field, so their read state stays unknown and they render without
+  unseen styling.
 - Follow the active Emacs theme through package-owned semantic faces that
   inherit standard faces; ship no fixed palette, fonts, or branded selection
   styling.
@@ -127,6 +130,13 @@ and review.
   date grouping and new branded colors remain intentionally excluded.
 - The user approved bounded three-to-two Subject/Summary allocation after
   wide-screen dogfood showed that either unbounded field could dominate a row.
+- The CLI search command serializes `id`, `topic_id`, `subject`, `updated_at`,
+  and matching `messages` only, so search results have no authoritative `seen`
+  field. Applying the true-only rule there showed every search hit as unseen,
+  contradicting the same thread in its box; search read state is therefore
+  `unknown` and renders plainly. A human-performed, schema-only live probe
+  confirmed that search rows omit `seen`; no mailbox content, identifiers, or
+  search text were retained.
 - The downstream literate Emacs configuration loads the development checkout,
   binds `C-c e` to `hey`, and passes its required batch startup smoke test.
 - Public hosting is approved at `https://github.com/codingquark/hey.el` under

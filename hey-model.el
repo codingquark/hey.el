@@ -74,7 +74,9 @@
 (cl-defstruct hey-posting
   "A normalized row from a HEY posting source.
 
-KIND is the symbol `bundle' for a bundle row and `thread' otherwise."
+KIND is the symbol `bundle' for a bundle row and `thread' otherwise.  SEEN is
+`seen' or `unseen' for sources which report read state, and `unknown' for
+sources such as search which do not."
   key kind account-id id topic-id subject contacts summary timestamp seen
   labels collections app-url matches original-index)
 
@@ -488,7 +490,10 @@ Return a plist with `:value' and `:warnings'."
          :timestamp (hey-model--clean-string
                      (or (hey-model--get (if search-p "updated_at" "created_at") raw)
                          (hey-model--get "updated_at" raw)))
-         :seen (hey-model--seen-state (hey-model--get "seen" raw))
+         ;; Search rows have no authoritative `seen' field; never guess.
+         :seen (if search-p
+                   'unknown
+                 (hey-model--seen-state (hey-model--get "seen" raw)))
          :labels (unless search-p
                    (hey-model--normalize-memberships
                     (hey-model--get "folders" raw)))
@@ -802,9 +807,10 @@ The frozen layouts are:
   `narrow'  [sender subject memberships date]
   `minimal' [sender subject date]
 
-Unseen subjects carry a leading marker and bold face.  A posting is seen only
-when the CLI's `seen' value is true; every other value is unseen.  Memberships
-expose their complete values via `help-echo'."
+Unseen subjects carry a leading marker and bold face; only an explicit
+`unseen' state gets that presentation, so a true `seen' value and the
+`unknown' state of search rows both render plainly.  Memberships expose
+their complete values via `help-echo'."
   (let* ((subject (hey-posting-subject posting))
          (subject-cell
           (if (eq (hey-posting-seen posting) 'unseen)

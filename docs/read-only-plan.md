@@ -257,9 +257,11 @@ records. There is no previous-page stack.
 - normalized contacts/sender display;
 - summary/snippet;
 - created/updated time;
-- binary seen state (`seen` or `unseen`) for display only: a posting is seen
-  iff the CLI's `seen` field is literal JSON `true`; every other value is
-  unseen;
+- seen state (`seen`, `unseen`, or `unknown`) for display only: posting
+  sources which report read state are seen iff the CLI's `seen` field is
+  literal JSON `true`, and every other value is unseen; sources whose rows
+  carry no authoritative `seen` field, such as search, stay `unknown` rather
+  than being shown as unseen;
 - ordered label ID/name records from posting `folders` when supplied;
 - ordered collection ID/name records when supplied;
 - optional validated application URL;
@@ -296,12 +298,14 @@ Normalization is source-specific:
   their posting-level contacts, summary, timestamps, seen state, labels,
   collection memberships, and app URL;
 - search maps `subject` directly, requires `topic_id`, treats posting `id` as
-  optional, applies the same true-only `seen` rule, retains all returned
-  `messages`, and derives
-  row sender, snippet, and optional app URL from the first matching message in
-  CLI order. Search does not currently supply reliable thread labels or
-  collection memberships; leave them unknown rather than issuing per-result
-  enrichment requests. Search row identity is account plus `topic_id`.
+  optional, retains all returned `messages`, and derives row sender, snippet,
+  and optional app URL from the first matching message in CLI order. The CLI
+  search contract exposes no authoritative `seen` field, so search read state
+  stays `unknown` even if a stray `seen` value appears in a response, and
+  search never shows a row it cannot corroborate as unseen. Search does not
+  currently supply reliable thread labels or collection memberships; leave
+  them unknown rather than issuing per-result enrichment requests. Search row
+  identity is account plus `topic_id`.
 
 ### Thread and entry
 
@@ -594,8 +598,9 @@ HEY · Personal · Imbox · 37 shown · more available
 Rules:
 
 - unseen is expressed primarily by weight plus a restrained marker, not a
-  theme-dependent bright color; only a literal JSON `true` `seen` value
-  suppresses that unseen presentation;
+  theme-dependent bright color; only an explicit `unseen` state earns that
+  presentation, so a literal JSON `true` `seen` value and `unknown` read state
+  both render without it;
 - valid posting-list timestamps render in the user's local time as
   `Today HH:MM`, `Yesterday HH:MM`, or `YYYY-MM-DD` for older dates; missing
   values remain blank, an unparseable value falls back to its sanitized source
@@ -1162,7 +1167,8 @@ design and safety review rather than another item in this delivery plan.
   name and the absence of forbidden output flags;
 - no write verb can be built;
 - JSON null/false/missing/additional-key handling;
-- source-specific box/bundle/search normalization and true-only seen handling;
+- source-specific box/bundle/search normalization, true-only seen handling for
+  posting sources, and `unknown` read state for search rows;
 - posting label and collection normalization, including absent memberships in
   search results;
 - posting/topic/account ID separation, including missing IDs and rejecting

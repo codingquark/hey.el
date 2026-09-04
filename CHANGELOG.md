@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Stop presenting `/` search results as unseen. Search responses carry no
+  authoritative `seen` field, so their read state is now `unknown` and their
+  rows show neither the unseen marker nor `hey-unseen-face`; box, bundle,
+  label, and collection postings keep the true-only seen rule.
 - Explain a missing or unusable HEY CLI actionably: `exec-path` discovery names
   the CLI baseline and how to install or point at it, an invalid
   `hey-executable` says how to correct or clear it without any fallback, and a

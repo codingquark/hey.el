@@ -264,7 +264,7 @@
     (should (equal (hey-posting-key posting) '("all" "77")))
     (should-not (hey-posting-id posting))
     (should (equal (hey-posting-topic-id posting) "77"))
-    (should (eq (hey-posting-seen posting) 'unseen))
+    (should (eq (hey-posting-seen posting) 'unknown))
     (should-not (hey-posting-labels posting))
     (should-not (hey-posting-collections posting))
     (should (equal (hey-posting-contacts posting) "First Match"))
@@ -423,6 +423,24 @@
   (should (eq (hey-model--seen-state t) 'seen))
   (dolist (raw (list 'hey-json-false nil "false" 0))
     (should (eq (hey-model--seen-state raw) 'unseen))))
+
+(ert-deftest hey-model-search-rows-never-claim-read-state ()
+  "Stray `seen' values must not assign read state to search rows."
+  (dolist (raw-seen '(t hey-json-false))
+    (let* ((source (make-hey-source :key '(search "all" "synthetic query")
+                                    :kind 'search :account-id "all"
+                                    :title "Search" :query "synthetic query"
+                                    :continuation-kind 'page))
+           (row `(("topic_id" . 77) ("subject" . "Search result")
+                  ("seen" . ,raw-seen)))
+           (posting (car (plist-get (hey-model-normalize-postings
+                                     `(("ok" . t) ("data" ,row))
+                                     source)
+                                    :value)))
+           (subject (aref (hey-model-posting-row posting 'wide) 2)))
+      (should (eq (hey-posting-seen posting) 'unknown))
+      (should (equal (substring-no-properties subject) "Search result"))
+      (should-not (get-text-property 0 'face subject)))))
 
 (ert-deftest hey-model-renders-bodyless-entry-summary ()
   (let* ((context (list :account-id "all" :account-name "All Accounts"

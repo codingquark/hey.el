@@ -607,6 +607,32 @@
       (should-not (string-match-p (regexp-quote query) (hey--status-header)))
       (should (eq (hey-source-kind hey--source) 'search)))))
 
+(ert-deftest hey-ui-search-rows-suppress-the-unseen-presentation ()
+  "A search hit renders without the unseen marker or the unseen face."
+  (hey-test-with-list
+    (setq hey--operation-overrides
+          `((hey-cli-search
+             . ,(lambda (_account _query _page _owner _key _generation success _failure)
+                  (funcall success
+                           '(("ok" . t)
+                             ("data"
+                              (("topic_id" . 77)
+                               ("subject" . "Search hit")
+                               ("messages"
+                                (("id" . 701)
+                                 ("creator" ("name" . "Match"))
+                                 ("summary" . "Excerpt")))))
+                             ("meta" ("page" . 1))))))))
+    (hey-search "private query")
+    (should (eq (hey-posting-seen (car hey--records)) 'unknown))
+    (hey--render-list nil 130)
+    (let* ((row (cadar (hey--tabulated-entries)))
+           (subject-index (cl-position "Subject" tabulated-list-format
+                                       :key #'car :test #'equal)))
+      (should (equal (substring-no-properties (aref row subject-index))
+                     "Search hit"))
+      (should-not (get-text-property 0 'face (aref row subject-index))))))
+
 (ert-deftest hey-ui-bundle-expands-in-one-stable-buffer ()
   (save-window-excursion
     (hey-test-with-list

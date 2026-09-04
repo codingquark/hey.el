@@ -5,7 +5,6 @@
       "topic_id": 77,
       "subject": "Search result",
       "updated_at": "2026-09-03T10:00:00Z",
-      "seen": false,
       "folders": [{"id": 99, "name": "Must be ignored"}],
       "messages": [
         {

@@ -17,8 +17,10 @@ The project is maintained at <https://github.com/codingquark/hey.el>.
 Authentication remains owned by the HEY CLI.  The package does not accept or
 store bearer tokens.
 
-A posting is seen only when the CLI returns literal JSON `true` in its `seen`
-field. `false`, `null`, a missing field, or any other value is shown as unseen.
+Box, bundle, label, and collection postings are shown as seen only when the CLI
+returns literal JSON `true` in their `seen` field; `false`, `null`, a missing
+field, or any other value is shown as unseen. Search results carry no
+authoritative `seen` field, so they are presented as neither seen nor unseen.
 
 ## Installation
 
