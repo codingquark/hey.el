@@ -4,10 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- Leave the date blank for bundle rows without one readable topic because one
-  aggregate timestamp does not describe every joined subject.  Open them
-  through the contact's read-only thread list when possible, including mail
-  that the unseen-only bundle endpoint no longer returns.
+- Leave When blank for bundle rows without one readable topic because their
+  single posting timestamp does not describe every joined subject.  Open them
+  through the contact's read-only thread list when the posting supplies a
+  contact ID, including mail that the unseen-only bundle endpoint no longer
+  returns.
+- Order list columns as Subject, Sender, Labels / collections, and When.  Give
+  Subject and Sender flexible width up to customizable 70- and 24-column
+  maximums, anchor compact subdued timestamps at the right edge, and remove
+  Summary from list rows.
 - Show `[Load more]` below lists with another page.  `RET` or mouse-2 activates
   the control; `M` remains available.  The control hides during requests and
   after exhaustion, and activation keeps point on the last loaded row.

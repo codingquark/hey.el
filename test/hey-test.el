@@ -114,6 +114,7 @@
 
 (ert-deftest hey-ui-defines-theme-native-semantic-faces ()
   (dolist (face '(hey-unseen-face
+                  hey-date-face
                   hey-label-face
                   hey-collection-face
                   hey-thread-subject-face
@@ -225,7 +226,7 @@
       (hey--resize-buffer width)
       (should (= (hey-test--configured-table-width) width)))))
 
-(ert-deftest hey-ui-empty-memberships-expand-the-flexible-columns ()
+(ert-deftest hey-ui-empty-memberships-expand-subject-to-its-cap ()
   (hey-test-with-list
     (let ((raw (copy-tree
                 (hey-test--posting 501 901
@@ -241,10 +242,10 @@
       (should-not (cl-find "Labels / collections" tabulated-list-format
                            :key #'car :test #'equal))
       (should (equal (mapcar #'car (append tabulated-list-format nil))
-                     '("Date" "Sender" "Subject" "Summary")))
-      (should (= (length (cadar (hey--tabulated-entries))) 4))
-      (should (= (hey-test--column-width "Subject") 55))
-      (should (= (hey-test--column-width "Summary") 36))
+                     '("Subject" "Sender" "When")))
+      (should (= (length (cadar (hey--tabulated-entries))) 3))
+      (should (= (hey-test--column-width "Subject") 70))
+      (should (= (hey-test--column-width "Sender") 24))
       (should (= (hey-test--configured-table-width) 130)))))
 
 (ert-deftest hey-ui-populated-memberships-retain-their-column ()
@@ -257,35 +258,37 @@
                      :value))
     (hey--render-list nil 130)
     (should (equal (mapcar #'car (append tabulated-list-format nil))
-                   '("Date" "Sender" "Subject"
-                     "Labels / collections" "Summary")))
-    (should (= (length (cadar (hey--tabulated-entries))) 5))
-    (should (= (hey-test--column-width "Subject") 42))
-    (should (= (hey-test--column-width "Summary") 28))
+                   '("Subject" "Sender" "Labels / collections"
+                     "When")))
+    (should (= (length (cadar (hey--tabulated-entries))) 4))
+    (should (= (hey-test--column-width "Subject") 70))
+    (should (= (hey-test--column-width "Sender") 23))
     (should (= (hey-test--configured-table-width) 130))))
 
-(ert-deftest hey-ui-wide-layout-splits-flexible-width-three-to-two ()
+(ert-deftest hey-ui-layouts-keep-subject-first-with-time-at-end ()
   (hey-test-with-list
-    (let ((raw (copy-tree (hey-test--posting 501 901 "Subject"))))
-      (setf (alist-get "folders" raw nil nil #'equal) nil
-            (alist-get "collections" raw nil nil #'equal) nil)
-      (setq hey--records
-            (plist-get (hey-model-normalize-postings
-                        (hey-test--postings-envelope (list raw))
-                        hey--source)
-                       :value))
-      (hey--render-list nil 200)
-      (should (= (hey-test--column-width "Subject") 97))
-      (should (= (hey-test--column-width "Summary") 64))
-      (should (= (hey-test--configured-table-width) 200)))))
+    (setq hey--records
+          (plist-get (hey-model-normalize-postings
+                      (hey-test--postings-envelope
+                       (list (hey-test--posting 501 901 "Subject")))
+                      hey--source)
+                     :value))
+    (dolist (case '((130 . ("Subject" "Sender" "Labels / collections"
+                            "When"))
+                    (90 . ("Subject" "Sender" "Labels / collections"
+                           "When"))
+                    (70 . ("Subject" "Sender" "When"))
+                    (40 . ("Subject" "When"))))
+      (hey--render-list nil (car case))
+      (should (equal (mapcar #'car (append tabulated-list-format nil))
+                     (cdr case)))
+      (should (= (hey-test--configured-table-width) (car case))))))
 
-(ert-deftest hey-ui-wide-layout-truncates-both-flexible-cells-with-help ()
+(ert-deftest hey-ui-wide-layout-caps-subject-width-with-full-help ()
   (hey-test-with-list
     (let* ((subject (make-string 120 ?S))
-           (summary (make-string 120 ?M))
            (raw (copy-tree (hey-test--posting 501 901 subject))))
-      (setf (alist-get "summary" raw nil nil #'equal) summary
-            (alist-get "folders" raw nil nil #'equal) nil
+      (setf (alist-get "folders" raw nil nil #'equal) nil
             (alist-get "collections" raw nil nil #'equal) nil)
       (setq hey--records
             (plist-get (hey-model-normalize-postings
@@ -297,17 +300,54 @@
              (subject-index
               (cl-position "Subject" tabulated-list-format
                            :key #'car :test #'equal))
-             (summary-index
-              (cl-position "Summary" tabulated-list-format
-                           :key #'car :test #'equal))
-             (subject-cell (aref row subject-index))
-             (summary-cell (aref row summary-index)))
-        (should (= (string-width subject-cell) 55))
-        (should (= (string-width summary-cell) 36))
+             (date-format
+              (cl-find "When" tabulated-list-format
+                       :key #'car :test #'equal))
+             (subject-cell (aref row subject-index)))
+        (should (= (string-width subject-cell) 70))
+        (should (plist-get (nthcdr 3 date-format) :right-align))
+        (should (= (hey-test--configured-table-width) 130))
+        (should-not (cl-find "Summary" tabulated-list-format
+                             :key #'car :test #'equal))
         (should (equal (get-text-property 0 'help-echo subject-cell)
-                       (concat "Subject: ● " subject)))
-        (should (equal (get-text-property 0 'help-echo summary-cell)
-                       (concat "Summary: " summary)))))))
+                       (concat "Subject: ● " subject)))))))
+
+(ert-deftest hey-ui-flexible-column-width-caps-are-customizable ()
+  (let ((hey-list-subject-max-width 48)
+        (hey-list-sender-max-width 20))
+    (hey-test-with-list
+      (setq hey--records
+            (plist-get (hey-model-normalize-postings
+                        (hey-test--postings-envelope
+                         (list (hey-test--posting 501 901 "Subject")))
+                        hey--source)
+                       :value))
+      (hey--render-list nil 200)
+      (should (= (hey-test--column-width "Subject") 48))
+      (should (= (hey-test--column-width "Sender") 20))
+      (should (= (hey-test--configured-table-width) 200)))))
+
+(ert-deftest hey-ui-wide-layout-caps-sender-width-with-full-help ()
+  (hey-test-with-list
+    (let* ((sender (make-string 60 ?A))
+           (raw (copy-tree (hey-test--posting 501 901 "Subject"))))
+      (setf (alist-get "name" (alist-get "creator" raw nil nil #'equal)
+                       nil nil #'equal)
+            sender)
+      (setq hey--records
+            (plist-get (hey-model-normalize-postings
+                        (hey-test--postings-envelope (list raw))
+                        hey--source)
+                       :value))
+      (hey--render-list nil 200)
+      (let* ((row (cadar (hey--tabulated-entries)))
+             (sender-index
+              (cl-position "Sender" tabulated-list-format
+                           :key #'car :test #'equal))
+             (sender-cell (aref row sender-index)))
+        (should (= (string-width sender-cell) 24))
+        (should (equal (get-text-property 0 'help-echo sender-cell)
+                       (concat "Sender: " sender)))))))
 
 (ert-deftest hey-ui-bundle-annotation-survives-column-projection ()
   (hey-test-with-list
@@ -344,11 +384,14 @@
                  (lambda () (cl-incf calls) now)))
         (let ((entries (hey--tabulated-entries)))
           (should (= calls 1))
-          (let ((date-index
-                 (cl-position "Date" tabulated-list-format
-                              :key #'car :test #'equal)))
-            (should (equal (aref (cadar entries) date-index)
-                           "Today 10:00"))))))))
+          (let* ((date-index
+                  (cl-position "When" tabulated-list-format
+                               :key #'car :test #'equal))
+                 (date (aref (cadar entries) date-index)))
+            (should (equal (substring-no-properties date) "10:00"))
+            (should (eq (get-text-property 0 'face date) 'hey-date-face))
+            (should (equal (get-text-property 0 'help-echo date)
+                           "2026-09-03T10:00:00"))))))))
 
 (ert-deftest hey-ui-refresh-and-revert-share-the-same-funnel ()
   (hey-test-with-list

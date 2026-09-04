@@ -61,7 +61,7 @@
     ("kind" . ,(or kind "topic")) ("name" . ,name) ("seen" . ,seen)
     ("creator" ("name" . ,sender))
     ("summary" . "A safe excerpt shown by the synthetic demo.")
-    ("created_at" . "2026-09-03 10:31")
+    ("created_at" . "2026-09-03T10:31:00Z")
     ("folders" (("id" . 11) ("name" . "Planning"))
                (("id" . 12) ("name" . "Receipts"))
                (("id" . 13) ("name" . "Travel")))
@@ -113,12 +113,12 @@ Delegate with KEY and GENERATION, delivering to SUCCESS or FAILURE."
           '(("id" . 801)
             ("alternative_sender_name" . "Alice Example")
             ("summary" . "The matching synthetic passage.")
-            ("created_at" . "2026-09-03 10:31")
+            ("created_at" . "2026-09-03T10:31:00Z")
             ("app_url" . "https://app.hey.com/topics/901#entry-801")))
          (result
           `(("id" . 501) ("topic_id" . 901)
             ("subject" . "Synthetic search result")
-            ("updated_at" . "2026-09-03 10:31")
+            ("updated_at" . "2026-09-03T10:31:00Z")
             ("messages" ,match)))
          (envelope
           (if page

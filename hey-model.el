@@ -32,6 +32,11 @@
   "Face for the subjects of explicitly unseen HEY postings."
   :group 'hey)
 
+(defface hey-date-face
+  '((t :inherit shadow))
+  "Face for posting dates in HEY lists."
+  :group 'hey)
+
 (defface hey-label-face
   '((t :inherit shadow))
   "Face for HEY label memberships."
@@ -795,33 +800,43 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
 (defun hey-model-format-posting-timestamp (timestamp now)
   "Format posting TIMESTAMP relative to NOW in the local time zone.
 
-Return `Today HH:MM' or `Yesterday HH:MM' for the corresponding local
-calendar dates.  Return YYYY-MM-DD for any other parseable ISO 8601 timestamp.
-Malformed timestamps fall back to their sanitized original text."
-  (let ((clean (hey-model--clean-string timestamp)))
-    (if (null now)
-        clean
-      (condition-case nil
-          (let* ((time (encode-time (iso8601-parse clean)))
-                 (date-difference (- (hey-model--local-date-number now)
-                                     (hey-model--local-date-number time))))
-            (cond
-             ((zerop date-difference)
-              (format-time-string "Today %H:%M" time))
-             ((= date-difference 1)
-              (format-time-string "Yesterday %H:%M" time))
-             (t (format-time-string "%Y-%m-%d" time))))
-        (error clean)))))
+Return HH:MM for the current local date, abbreviated month and day within the
+current year, or abbreviated month, day, and year otherwise.  Malformed
+timestamps fall back to their sanitized original text.  Apply `hey-date-face'
+and retain the sanitized source timestamp in help text when reformatted."
+  (let* ((clean (hey-model--clean-string timestamp))
+         (display
+          (if (null now)
+              clean
+            (condition-case nil
+                (let* ((time (encode-time (iso8601-parse clean)))
+                       (decoded (decode-time time))
+                       (now-decoded (decode-time now))
+                       (month (format-time-string "%b" time))
+                       (day (decoded-time-day decoded))
+                       (year (decoded-time-year decoded)))
+                  (cond
+                   ((= (hey-model--local-date-number now)
+                       (hey-model--local-date-number time))
+                    (format-time-string "%H:%M" time))
+                   ((= year (decoded-time-year now-decoded))
+                    (format "%s %d" month day))
+                   (t (format "%s %d, %d" month day year))))
+              (error clean)))))
+    (cond
+     ((string-empty-p display) display)
+     ((string= display clean) (propertize display 'face 'hey-date-face))
+     (t (propertize display 'face 'hey-date-face 'help-echo clean)))))
 
 (defun hey-model-posting-row (posting layout)
   "Format POSTING as a vector for symbolic LAYOUT.
 
 The frozen layouts are:
 
-  `wide'    [date sender subject memberships summary]
-  `medium'  [date sender subject memberships]
-  `narrow'  [sender subject memberships date]
-  `minimal' [sender subject date]
+  `wide'    [subject sender memberships date]
+  `medium'  [subject sender memberships date]
+  `narrow'  [subject sender memberships date]
+  `minimal' [subject date]
 
 Unseen subjects carry a leading marker and `hey-unseen-face'; only an
 explicit `unseen' state earns that presentation, so `seen' values and the
@@ -838,19 +853,18 @@ complete values via `help-echo'."
                         (null (hey-posting-topic-id posting)))
                    ""
                  (hey-posting-timestamp posting)))
-         (sender (hey-posting-contacts posting))
-         (summary (hey-posting-summary posting)))
+         (sender (hey-posting-contacts posting)))
     (pcase layout
       ('wide
-       (vector date sender subject-cell
-               (hey-model--row-memberships posting 28) summary))
+       (vector subject-cell sender
+               (hey-model--row-memberships posting 28) date))
       ('medium
-       (vector date sender subject-cell
-               (hey-model--row-memberships posting 24)))
+       (vector subject-cell sender
+               (hey-model--row-memberships posting 24) date))
       ('narrow
-       (vector sender subject-cell
+       (vector subject-cell sender
                (hey-model--row-memberships posting 16) date))
-      ('minimal (vector sender subject-cell date))
+      ('minimal (vector subject-cell date))
       (_ (error "Unknown HEY posting layout: %S" layout)))))
 
 (defun hey-model--markdown-escape (value)

@@ -28,8 +28,8 @@
 
 ## Approved UI choices
 
-- Show summary text only in the wide list layout; progressively remove it at
-  narrower breakpoints.
+- Order list columns as Subject, Sender, Labels / collections, and When; omit
+  summaries from list rows and keep When at the far right.
 - Show compact labels and collections with the complete values in help text.
 - Mark unseen rows with a leading dot and bold subject. A posting from a source
   that reports read state is seen iff the CLI's `seen` field is literal JSON
@@ -41,14 +41,17 @@
   styling.
 - Enable theme-owned buffer-local `hl-line-mode` in HEY lists by default, with
   `hey-highlight-current-row` as the public opt-out.
-- Render valid posting-list timestamps in local time as `Today HH:MM`,
-  `Yesterday HH:MM`, or `YYYY-MM-DD`, preserving sanitized malformed text and
-  blank missing values while leaving thread timestamps unchanged. Leave a
-  bundle date blank when the row has no single readable topic.
-- Split wide-layout flexible width three-to-two between Subject and Summary,
-  truncate both with complete help text, and omit an all-empty memberships
-  column until a loaded row contains a label or collection; continue to
-  prioritize subjects in narrower layouts.
+- Render valid posting-list timestamps as `HH:MM` today, `Mon D` earlier in
+  the current year, or `Mon D, YYYY` otherwise.  Leave bundle timestamps blank
+  when the row has no single readable topic, because one aggregate time does
+  not describe every joined subject.
+  Right-align timestamps in `hey-date-face`, which inherits `shadow`, and leave
+  thread-entry timestamps unchanged.
+- Give Subject first claim on flexible width up to a customizable 70-column
+  maximum, truncate it with complete help text, and omit an all-empty
+  memberships column until a loaded row contains a label or collection.
+- Let Sender grow from its responsive baseline to a customizable 24-column
+  maximum and retain the complete name in help text when truncated.
 - Do not add date grouping or new package-branded colors.
 - Open with `RET` in the same window and `o` in another window.
 - Use explicit `M` for load more; resize never fetches data.
@@ -98,9 +101,6 @@ evidence-driven dogfood refinement and MELPA review.
 
 Move an item to active work when starting it; remove it when complete.
 
-- Try an Elfeed-like layout: `<date> <subject> <sender> <labels>`.
-- Try a compact, subdued date in another position.
-
 ## Acceptance evidence
 
 - Parent full gate, local pinned dependency cache, rerun after the M6
@@ -111,7 +111,7 @@ Move an item to active work when starting it; remove it when complete.
 - Parent clean offline gate used a fresh ELPA directory plus the two documented
   checksum-pinned archive overrides — the same 74/74 and all build stages
   passed without dependency network access.
-- The current package artifact has SHA-256
+- The v0.1.0 release artifact has SHA-256
   `d14a9ff8f9ad17accd0bdcd812ba439f5ddcfd78697bfe21dee63bc07a36054a`.
 - A fresh clone of release commit `32e2816` passed `make check`: 89/89 ERT,
   strict byte compilation, Checkdoc/package-lint, read-only audit,
@@ -127,19 +127,19 @@ Move an item to active work when starting it; remove it when complete.
   recipe pull request is truthfully eligible on 2026-10-03.
 - The user approved the fake-backed list, bundle, and thread interaction on
   2026-09-03 and authorized proceeding to an already-seen-mail validation.
-- The user approved theme-owned current-row highlighting, humanized dates, and
-  subject-first column allocation after comparing the HEY and Elfeed views;
-  date grouping and new branded colors remain intentionally excluded.
-- The user approved bounded three-to-two Subject/Summary allocation after
-  wide-screen dogfood showed that either unbounded field could dominate a row.
+- The user approved theme-owned current-row highlighting and humanized dates.
+  On 2026-09-04, further dogfood replaced the Subject/Summary split with a
+  subject-first scan order and a compact, subdued timestamp anchored at the
+  right edge.  Date grouping and new branded colors remain intentionally
+  excluded.
 - Dogfood exposed bundle rows whose joined subjects outlived the aggregate
-  posting timestamp and whose unseen-only expansion returned no rows. Bundle
-  rows without one readable topic now omit the misleading date and use the CLI
-  1.4.0 read-only contact-thread source when a contact ID is present; the
-  unseen-only bundle source remains the safe fallback.
+  posting timestamp and whose unseen-only expansion returned no rows.  Bundle
+  rows without one readable topic now omit the misleading When value and use
+  the CLI 1.4.0 read-only contact-thread source when a contact ID is present;
+  the unseen-only bundle source remains the safe fallback.
 - Bundle correction packet: `make check` passed from `main` under the local
   Emacs 31.1 build (103/103 ERT, strict compile, lint, read-only audit, package,
-  install). The package artifact has SHA-256
+  install).  The package artifact has SHA-256
   `c9a140c51b541d78e7b48b656727c4989fa228e74d822720715dee63f2b16641`.
 - The CLI search command serializes `id`, `topic_id`, `subject`, `updated_at`,
   and matching `messages` only, so search results have no authoritative `seen`
@@ -165,6 +165,19 @@ Move an item to active work when starting it; remove it when complete.
   Coverage pins the header status content, bottom-of-table `[Load more]`
   placement and visibility, `RET`/mouse-2 activation, point anchoring on the
   last loaded row, and retry after a failed append.
+- Subject-first list layout packet: `make check` passed under the local Emacs
+  31.1 build (103/103 ERT, strict compile, lint, read-only audit, package,
+  install).
+  Coverage pins the subject-first responsive order, customizable Subject and
+  Sender caps, compact trailing timestamp, Summary omission, and exact model
+  row shapes. The package artifact has SHA-256
+  `0b8425b80d771a200ccf07e64c0cefb1d7093120de8c58f04e533933ef03a4b2`.
+- Bundle contact-thread packet: `make check` passed under the local Emacs 31.1
+  build (105/105 ERT, strict compile, lint, read-only audit, package, install).
+  Coverage pins the closed contact-thread argv, cursor contract, normalized
+  contact ID, bundle fallback choice, aggregate timestamp omission, and fake
+  transport boundary. The package artifact has SHA-256
+  `69339e205aa4fce59cc072b5356d3ba2356f3f5e80e61df0037edd03ce3c1cd0`.
 - Independent security review found no mailbox mutation route or process,
   path-disclosure, fake-boundary, or audit-bypass defect.
 - Automated and agent-driven work ran no authenticated HEY command, mailbox

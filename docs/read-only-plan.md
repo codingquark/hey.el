@@ -541,7 +541,7 @@ inherits a standard Emacs face and specifies no color directly. Model-owned
 row formatters define and apply row faces; the UI library defines faces used by
 buffer-state rendering and thread overlays.
 
-The public face names are `hey-unseen-face`, `hey-label-face`,
+The public face names are `hey-unseen-face`, `hey-date-face`, `hey-label-face`,
 `hey-collection-face`, `hey-thread-subject-face`,
 `hey-metadata-label-face`, `hey-status-face`, `hey-warning-face`, and
 `hey-error-face`.
@@ -584,9 +584,9 @@ Example status header and wide layout:
 
 ```text
 HEY · Personal · Imbox · 37 shown · updated 11:42
-  Date             Sender             Subject              Labels           Summary
-● Today 10:31      Alice Example      Design review moved  Work, Planning   Friday works…
-  Yesterday 07:56  Basecamp           Receipt for HEY      Receipts         Your receipt…
+  Subject                              Sender             Labels                When
+  ● Design review moved                Alice Example      Work, Planning        10:31
+  Receipt for HEY                      Basecamp           Receipts              Sep 3
 
 [Load more]
 ```
@@ -595,9 +595,9 @@ Example narrow layout:
 
 ```text
 HEY · Personal · Imbox · 37 shown
-  Sender              Subject                              Date
-● Alice Example       Design review moved                  Today 10:31
-  Basecamp            Receipt for HEY                      Yesterday 07:56
+  Subject                              Sender                 When
+  ● Design review moved                Alice Example          10:31
+  Receipt for HEY                      Basecamp                Sep 3
 
 [Load more]
 ```
@@ -608,35 +608,44 @@ Rules:
   theme-dependent bright color; only an explicit `unseen` state earns that
   presentation, so a literal JSON `true` `seen` value and `unknown` read state
   both render without it;
-- valid posting-list timestamps render in the user's local time as
-  `Today HH:MM`, `Yesterday HH:MM`, or `YYYY-MM-DD` for older dates; bundle rows
-  without one readable topic leave the date blank because one aggregate time
-  cannot describe every joined subject; other missing values remain blank, an
-  unparseable value falls back to its sanitized source text, and thread
-  timestamps remain unchanged; the UI supplies one explicit clock snapshot to
-  the pure model formatter for each complete list render;
+- valid posting-list timestamps render in the user's local time as `HH:MM` for
+  the current date, `Mon D` earlier in the current year, or `Mon D, YYYY`
+  otherwise; bundle rows without one readable topic leave When blank because
+  one aggregate posting time cannot describe every joined subject; other
+  missing values remain blank, an unparseable value falls back to its sanitized
+  source text, and thread timestamps remain unchanged; the UI supplies one
+  explicit clock snapshot to the pure model formatter for each complete list
+  render;
 - one logical posting per row;
 - a bundled posting without `topic_id` is shown distinctly and opens the
-  contact's read-only, seen-and-unseen thread list when possible; the
-  unseen-only `bundle view` remains the fallback. External URL handoff remains
-  available when the posting supplies a valid application URL;
-- full sender, subject, and summary values remain available through row
-  help/details when visually truncated; `/` performs server search rather than
-  pretending local isearch can inspect text that was not inserted;
+  contact's read-only seen-and-unseen thread list when its contact ID is known;
+  otherwise it opens the unseen-only `bundle view` child list; external URL
+  handoff remains available when the posting supplies a valid application URL;
+- a visually truncated subject retains its complete value in help text; `/`
+  performs server search rather than pretending local isearch can inspect text
+  that was not inserted;
 - render posting `folders` as compact labels in a subdued face, with collection
   membership visually distinct rather than presented as another label;
 - reserve trailing space for labels, compact overflow as `Receipts, Travel +2`,
   and expose the complete memberships through row details or `help-echo`;
-- in the wide layout, split the flexible width three-to-two between subject and
-  summary and visually truncate both with their complete values in help text;
-  when all currently loaded normalized rows have no labels or collections,
-  omit the memberships column and share its width between those two columns,
-  restoring the column when a later loaded row has membership data; medium,
-  narrow, and minimal layouts continue to give their remaining width to the
-  subject, with narrow and minimal layouts omitting memberships;
-- when memberships exist, they take display priority over summary: wide layouts
-  add summary, narrower layouts remove it first, and only extremely narrow
-  layouts may omit the compact membership column;
+- order list columns as subject, sender, memberships, and timestamp, following
+  the subject-first scan path approved during dogfood; summaries stay out of
+  list rows, narrow layouts omit memberships, and minimal layouts retain only
+  subject and timestamp;
+- keep the timestamp at the far right in `hey-date-face`, which inherits
+  `shadow`; right-align it and give its column any width left after the Subject
+  cap so it stays anchored at the window edge; retain the sanitized source
+  timestamp in help text when the displayed value is reformatted;
+- give the subject first claim on flexible width up to the customizable
+  `hey-list-subject-max-width`, which defaults to 70 columns like Elfeed's title
+  cap, and visually truncate it with its complete value in help text; when all
+  currently loaded normalized rows have no labels or collections, omit the
+  memberships column and give its width to the subject up to that cap,
+  restoring the column when a later loaded row has membership data; narrow and
+  minimal layouts omit memberships;
+- let the sender grow from its responsive baseline to
+  `hey-list-sender-max-width`, which defaults to 24 columns, then retain the
+  complete sender name in help text when visually truncated;
 - never fetch per-thread metadata merely to enrich a row; search rows leave
   unavailable label and collection data empty rather than guessing or issuing
   N+1 requests;
@@ -660,9 +669,10 @@ Rules:
   commands skip every non-row status or heading line;
 - local column sorting stays disabled because sorting one accumulated prefix of
   a server-paginated mailbox would be misleading;
-- do not group rows by date or introduce new branded colors; humanized dates
-  and theme-owned current-row highlighting provide the approved scanability
-  improvements without changing navigation or pagination semantics;
+- do not group rows by date or introduce new branded colors; compact trailing
+  timestamps and theme-owned current-row highlighting provide the approved
+  scanability improvements without changing navigation or pagination
+  semantics;
 - use the mode line only as a conventional fallback; do not repurpose
   `tab-line-format`, which belongs to the user's buffer/tab workflow;
 - empty, loading, exhausted, partial, and failed states must be designed rather
@@ -1004,9 +1014,9 @@ connecting the UI to the real transport. Exercise:
 - delayed and out-of-order callbacks without stale-buffer corruption.
 
 Record every open UX question as accepted or deferred. In particular, decide
-summary visibility, label width, unseen styling, same-window `RET`, thread
-collapse, `SPC` boundary behavior, and explicit `M` load-more behavior. Preview
-remains a later optional experiment and does not expand this milestone.
+label width, unseen styling, same-window `RET`, thread collapse, `SPC` boundary
+behavior, and explicit `M` load-more behavior. Preview remains a later optional
+experiment and does not expand this milestone.
 
 **Automated gate:** fake-backed UI exercises pass without network access, keep
 identity and point stable, and issue no transport request during resize.
@@ -1087,7 +1097,8 @@ search, label, and collection navigation without cross-source state leakage.
 ### Milestone 6 — dogfood, refinement, and publication
 
 Implemented refinements include responsive columns, theme-owned row
-highlighting, and humanized list dates. The following remain evidence-driven:
+highlighting, and compact trailing list timestamps. The following remain
+evidence-driven:
 
 - thread folding and origin-list next/previous navigation;
 - complete keyboard and accessibility review;
@@ -1179,8 +1190,11 @@ design and safety review rather than another item in this delivery plan.
 - bundle rows expand without substituting posting IDs for topic IDs;
 - posting labels and collections render distinctly, compact predictably, expose
   complete memberships, and cause no per-row enrichment requests;
-- wide subject and summary cells split flexible width three-to-two, truncate
-  with complete help text, and keep the configured table within the window;
+- every responsive layout preserves the subject-first scan order, right-aligns
+  the subdued timestamp at the far edge, and keeps the configured table within
+  the window; the subject receives flexible width up to its configured maximum
+  and the sender grows to its smaller configured maximum; both retain their
+  complete values in help text when truncated;
   the memberships column disappears only while every loaded row lacks
   memberships, and pagination can restore it without a transport request
   beyond the requested page load;

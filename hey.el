@@ -74,6 +74,16 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
   :type 'boolean
   :group 'hey)
 
+(defcustom hey-list-subject-max-width 70
+  "Maximum Subject column width in `hey-list-mode'."
+  :type 'integer
+  :group 'hey)
+
+(defcustom hey-list-sender-max-width 24
+  "Maximum Sender column width in `hey-list-mode'."
+  :type 'integer
+  :group 'hey)
+
 (defvar hey-common-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "b") #'hey-browse-url)
@@ -137,29 +147,21 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
   "Live primary HEY list buffer; `hey' reuses it across renamings.")
 
 (defconst hey--list-layouts
-  '((wide . ((date "Date" 16)
+  '((wide . ((subject "Subject" 30)
              (sender "Sender" 18)
-             (subject "Subject" 30)
              (memberships "Labels / collections" 20)
-             (summary "Summary" 20)))
-    (medium . ((date "Date" 16)
+             (date "When" 12)))
+    (medium . ((subject "Subject" 30)
                (sender "Sender" 18)
-               (subject "Subject" 30)
-               (memberships "Labels / collections" 16)))
-    (narrow . ((sender "Sender" 14)
-               (subject "Subject" 12)
                (memberships "Labels / collections" 16)
-               (date "Date" 16)))
-    (minimal . ((sender "Sender" 14)
-                (subject "Subject" 1)
-                (date "Date" 16))))
+               (date "When" 12)))
+    (narrow . ((subject "Subject" 12)
+               (sender "Sender" 14)
+               (memberships "Labels / collections" 16)
+               (date "When" 12)))
+    (minimal . ((subject "Subject" 1)
+                (date "When" 12))))
   "Column fields, titles, and preferred widths for each list layout.")
-
-(defconst hey--wide-subject-share 3
-  "Shares of flexible space given to Subject in the wide list layout.")
-
-(defconst hey--wide-flex-shares 5
-  "Total shares of flexible space in the wide list layout.")
 
 (defun hey--call (operation &rest arguments)
   "Call named CLI OPERATION with ARGUMENTS.
@@ -258,35 +260,46 @@ posting, and at the narrow breakpoint where Subject takes priority."
 (defun hey--column-format (layout columns width)
   "Return a tabulated-list format for LAYOUT's COLUMNS at WIDTH.
 
-Wide layouts split flexible space three-to-two between Subject and Summary.
-Other layouts give Subject the space left after reserving fixed columns."
+Give Subject and Sender available space up to their configured limits."
   (let* ((layout-columns (alist-get layout hey--list-layouts))
          (subject-base (nth 2 (assq 'subject layout-columns)))
-         (summary-column (assq 'summary columns))
-         (summary-base (and summary-column (nth 2 summary-column)))
+         (sender-column (assq 'sender columns))
+         (sender-base (and sender-column
+                           (nth 2 (assq 'sender layout-columns))))
+         (subject-limit (max 1 hey-list-subject-max-width))
+         (sender-limit (and sender-column
+                            (max 1 hey-list-sender-max-width)))
+         (subject-floor (min subject-base subject-limit))
+         (sender-floor (and sender-column
+                            (min sender-base sender-limit)))
          (fixed-width
           (cl-loop for (field _title preferred) in columns
-                   unless (memq field '(subject summary))
+                   unless (memq field '(subject sender))
                    sum preferred))
          (inter-column-padding (max 0 (1- (length columns))))
          (available (- width tabulated-list-padding inter-column-padding
                        fixed-width))
          (subject-width
-          (if summary-column
-              (max subject-base
-                   (min (- available summary-base)
-                        (ceiling (* available hey--wide-subject-share)
-                                 hey--wide-flex-shares)))
-            (max subject-base available)))
-         (summary-width (and summary-column (- available subject-width))))
+          (min subject-limit
+               (max subject-floor (- available (or sender-floor 0)))))
+         (sender-width
+          (and sender-column
+               (min sender-limit
+                    (max sender-floor (- available subject-width)))))
+         (used-width (+ tabulated-list-padding inter-column-padding
+                        fixed-width subject-width (or sender-width 0)))
+         (date-extra (max 0 (- width used-width))))
     (vconcat
      (mapcar (lambda (column)
                (pcase-let ((`(,field ,title ,preferred) column))
-                 (list title (pcase field
-                               ('subject subject-width)
-                               ('summary summary-width)
-                               (_ preferred))
-                       nil)))
+                 (append
+                  (list title (pcase field
+                                ('subject subject-width)
+                                ('sender sender-width)
+                                ('date (+ preferred date-extra))
+                                (_ preferred))
+                        nil)
+                  (and (eq field 'date) '(:right-align t)))))
              columns))))
 
 (defun hey--fit-list-cell (value title width)
@@ -341,7 +354,7 @@ cell's help text."
                      (visible-index
                       (cl-position field hey--columns :key #'car))
                      (format (aref tabulated-list-format visible-index)))
-                (if (memq field '(subject summary))
+                (if (memq field '(subject sender date))
                     (hey--fit-list-cell value (car format) (cadr format))
                   value))))))
 

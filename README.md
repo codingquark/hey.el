@@ -81,16 +81,23 @@ validated HEY URLs, `?` for mode help, and `q` to return.
 
 Run `M-x customize-group RET hey` to adjust the package options and faces,
 including the current-row highlight.  Theme authors can customize
-`hey-unseen-face`, `hey-label-face`,
+`hey-unseen-face`, `hey-date-face`, `hey-label-face`,
 `hey-collection-face`, `hey-thread-subject-face`,
 `hey-metadata-label-face`, `hey-status-face`, `hey-warning-face`, and
 `hey-error-face` without replacing the list, header-line, or Markdown faces
 owned by their respective modes.
 
-Bundle rows without one readable topic leave their date blank: the CLI
-supplies one timestamp for the aggregate, not an authoritative time for every
-subject joined in that row.  `RET` uses the bundle contact's read-only thread
-list when available, so already-read bundled mail remains reachable.
+Lists follow a Subject, Sender, Labels / collections, and When scan order.
+Subject receives flexible width up to 70 columns by default; customize
+`hey-list-subject-max-width` to change the cap.  Sender grows up to 24 columns;
+customize `hey-list-sender-max-width` to change its cap.  Truncated subjects and
+senders retain their full text in help.  The subdued, right-aligned When column
+shows today's time, a compact date for older mail, and stays at the far edge.
+Bundle rows without one readable topic leave When blank: the CLI supplies one
+timestamp for the aggregate, not an authoritative time for every subject joined
+in that row.  `RET` uses the bundle contact's read-only thread list when
+available, so already-read bundled mail remains reachable.  Summaries stay out
+of rows.
 
 When the current source has another page ready, the list offers `[Load more]`
 at the bottom of the table; push it with `RET` or mouse-2, or press `M`.  The

@@ -56,10 +56,10 @@ Required public pure functions:
 
 `LAYOUT` is one of four symbols with these exact vector shapes:
 
-- `wide`: `[date sender subject memberships summary]`
-- `medium`: `[date sender subject memberships]`
-- `narrow`: `[sender subject memberships date]`
-- `minimal`: `[sender subject date]`
+- `wide`: `[subject sender memberships date]`
+- `medium`: `[subject sender memberships date]`
+- `narrow`: `[subject sender memberships date]`
+- `minimal`: `[subject date]`
 
 The memberships cell lists labels first and collections with distinct
 presentation; its `help-echo` exposes the complete untruncated memberships.
