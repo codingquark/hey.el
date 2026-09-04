@@ -20,8 +20,9 @@ Source responsibilities are deliberately narrow:
 - `hey.el` owns public commands and list/thread presentation.
 
 Use lexical binding, two-space indentation, lower-case hyphenated symbols, and
-the `hey-` prefix.  Public functions and variables need docstrings.  Raw JSON
-must stop at the model boundary.
+the `hey-` prefix.  Public functions and variables need docstrings, written in
+the documentation style described in `AGENTS.md`.  Raw JSON must stop at the
+model boundary.
 
 Before requesting review, run:
 

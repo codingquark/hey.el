@@ -35,6 +35,17 @@ Give concurrent writers disjoint path sets. The orchestrator reviews every
 diff, integrates changes, and runs the relevant checks. Human approval gates in
 `PROJECT.md` are not agent-completable.
 
+## Documentation style
+
+Follow the [Modus themes](https://github.com/protesilaos/modus-themes) prose
+conventions: terse, active voice, and present tense. Start function docstrings
+with an imperative summary; keep simple docstrings to one line. Add detail only
+for data shapes, safety invariants, and non-obvious contracts.
+
+Comments state purpose or rationale, not code. Describe current behavior, not
+superseded implementations. Keep release history in `CHANGELOG.md` and dated
+decisions or acceptance evidence in `PROJECT.md`.
+
 ## Build and test
 
 Use `make check` as the full local gate. Narrow targets are `make test`,

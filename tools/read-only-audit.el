@@ -170,8 +170,8 @@ SEEN contains functions already visited during recursion."
                  (not (memq name allowed-operations))
                  (not (eq name 'hey-cli--start-process)))
         (error "Function reaches transport outside allowlist: %s" name))))
-  ;; Guard the audit itself against the two easy regressions which previously
-  ;; hid private-helper and function-reference routes.
+  ;; Self-test: the audit must catch an indirect route through a private
+  ;; helper and a function reference to a forbidden primitive.
   (let ((synthetic
          (hey-build-function-call-graph
           '((defun synthetic-helper () (hey-cli--start-process 'write nil))

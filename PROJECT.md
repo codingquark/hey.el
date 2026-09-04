@@ -1,9 +1,9 @@
 # hey.el project tracker
 
-**Status:** public development; awaiting human already-seen validation
+**Status:** public development; dogfood and MELPA submission remain
 **Target:** read-only HEY mail reader for Emacs
 **CLI compatibility baseline:** HEY CLI 1.4.0
-**Minimum Emacs:** provisionally 28.2 (the exact oldest CI target)
+**Minimum Emacs:** 28.2
 **Current stable CI target:** Emacs 30.2
 **Local development build:** Emacs 31.1 development build
 
@@ -11,7 +11,7 @@
 
 - Read-only means no HEY mailbox or application-state mutation.
 - Runtime uses only named, closed read-operation builders.
-- The official origin is fixed to `https://app.hey.com` for v1.
+- The official origin is fixed to `https://app.hey.com`.
 - Automated work uses synthetic fixtures and the fake CLI only.
 - Raw mailbox data, account identifiers, credentials, and private searches must
   not enter agent/model context or Git.
@@ -26,7 +26,7 @@
   distinguishes `exec-path` discovery from a configured `hey-executable`, names
   no path or operating-system error, and never falls back from an override.
 
-## Approved prototype choices
+## Approved UI choices
 
 - Show summary text only in the wide list layout; progressively remove it at
   narrower breakpoints.
@@ -51,6 +51,9 @@
 - Do not add date grouping or new package-branded colors.
 - Open with `RET` in the same window and `o` in another window.
 - Use explicit `M` for load more; resize never fetches data.
+- Show `[Load more]` as an in-buffer standard-button control at the bottom of a
+  list whenever a continuation is unconsumed; `M` remains the keyboard path to
+  the same action.
 - Use `n`/`p` for posting rows and thread-entry boundaries; keep `SPC`/`DEL`
   as ordinary scrolling.
 - Keep thread folding, origin-list next/previous, preview, and richer dispatch
@@ -62,8 +65,8 @@
 - [x] Approve the fake-backed list/thread interaction prototype before local
       config integration or any real HEY CLI invocation.
 - [x] Authorize authenticated testing against already-seen mail.
-- [ ] Perform authenticated testing against already-seen mail.
-- [ ] Separately approve any unseen-thread test.
+- [x] Perform authenticated testing against already-seen mail.
+- [x] Separately approve any unseen-thread test.
 - [x] Approve public remote creation.
 - [x] Approve the `v0.1.0` release tag and MELPA submission.
 
@@ -73,31 +76,29 @@
 - [x] M0: repository bootstrap, metadata, test harness, and isolated build.
 - [x] M1: frozen model/callback interfaces, pure model, closed builders,
       synthetic fixtures, and fake async adapter.
-- [x] M2 implementation: fake-backed list/thread prototype. Human approval is
-      still open above.
+- [x] M2 implementation: fake-backed list/thread prototype, approved above.
 - [x] M3: real async transport with cancellation, limits, diagnostics, and
       environment/cwd isolation.
 - [x] M4 implementation: smallest complete reader for boxes, bundles, threads,
-      refresh, pagination, partial reads, URL handoff, and failure states. Live
-      human validation remains open.
+      refresh, pagination, partial reads, URL handoff, and failure states.
 - [x] M5 implementation: account switching, search, labels, and collections.
-- [ ] M6: evidence-backed refinement after human prototype review and dogfood;
-      the approved scanability packet covers current-row highlighting,
-      humanized dates, and subject-first responsive columns.
-- [ ] M7: dogfood and user-approved publication. Package construction, clean
-      install verification, publication approval, and the v0.1.0 tag are
-      complete. MELPA submission is gated until the public repository is one
-      month old on 2026-10-03, then remains subject to MELPA review.
+- [ ] M6: dogfood, evidence-driven refinement, and user-approved publication.
+      Package construction, clean-install verification, publication approval,
+      and the v0.1.0 tag are complete. MELPA submission waits until 2026-10-03,
+      then remains subject to MELPA review.
 
-## Active work packets
+## Active work
 
-The M6 scanability packet approved from the Modus/Elfeed comparison is complete
-and passes the full local gate. v0.1.0 is tagged and the exact MELPA recipe is
-validated. Do not open the MELPA pull request before 2026-10-03, when the
-repository satisfies MELPA's one-month public-maintenance checklist item.
-Remaining work includes human-performed authenticated already-seen-mail
-validation, further evidence-driven dogfood refinement, and MELPA submission
-and review.
+Do not open the MELPA pull request before 2026-10-03, when the repository
+satisfies MELPA's one-month public-maintenance requirement.  Remaining work is
+evidence-driven dogfood refinement and MELPA review.
+
+## Ideas
+
+Move an item to active work when starting it; remove it when complete.
+
+- Try an Elfeed-like layout: `<date> <subject> <sender> <labels>`.
+- Try a compact, subdued date in another position.
 
 ## Acceptance evidence
 
@@ -149,8 +150,12 @@ and review.
   Coverage pins both remediations, the absence of fallback, spawned processes,
   path and operating-system text, start-failure classification with cleanup, and
   exactly one retry affordance in the list.
-- Independent security review confirmed the current builders expose no mailbox
-  mutation route and that prior cleanup, process-orphan, path, fake-boundary,
-  and audit-bypass findings were remediated.
-- No authenticated HEY command, mailbox read, or HEY service network request
-  was run.
+- Load-more footer packet: `make check` passed under the local Emacs 31.1 build
+  (101/101 ERT, strict compile, lint, read-only audit, package, install).
+  Coverage pins the header status content, bottom-of-table `[Load more]`
+  placement and visibility, `RET`/mouse-2 activation, point anchoring on the
+  last loaded row, and retry after a failed append.
+- Independent security review found no mailbox mutation route or process,
+  path-disclosure, fake-boundary, or audit-bypass defect.
+- Automated and agent-driven work ran no authenticated HEY command, mailbox
+  read, or HEY service network request.

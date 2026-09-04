@@ -11,9 +11,8 @@
 ;;; Commentary:
 
 ;; This file is the pure boundary between string-keyed HEY CLI JSON and the
-;; package UI.  It performs no I/O and deliberately ignores envelope fields
-;; which the reader does not need, including breadcrumbs and synchronization
-;; metadata.
+;; package UI.  It performs no I/O and discards envelope fields the reader
+;; does not need.
 
 ;;; Code:
 
@@ -44,7 +43,7 @@
   :group 'hey)
 
 (defconst hey-model--official-origin "https://app.hey.com"
-  "The only application origin accepted by the v1 reader.")
+  "The only application origin accepted for displayed or followed URLs.")
 
 (cl-defstruct hey-account
   "A linked HEY mail account or the all-accounts filter."
@@ -119,12 +118,13 @@ about individual records without discarding otherwise valid neighbors."
   "Return VALUE as sanitized metadata, or an empty string."
   (if (stringp value) (hey-model-sanitize-metadata value) ""))
 
+;; String identifiers are never rewritten: a value which sanitization or
+;; trimming would change is rejected, so two hostile identifiers cannot
+;; collapse onto one composite identity.
 (defun hey-model--id-string (value)
   "Return clean, exact identifier VALUE as a string, or nil.
 
-Numeric identifiers must be positive integers.  String identifiers are not
-rewritten: a value which sanitization or trimming would change is rejected so
-two hostile identifiers cannot collapse onto one composite identity."
+Numeric identifiers must be positive integers."
   (cond
    ((and (integerp value) (> value 0)) (number-to-string value))
    ((stringp value)
@@ -205,10 +205,9 @@ rejected rather than normalized."
                        (string= (or (url-host url) "") "app.hey.com")
                        (null (url-user url))
                        (null (url-password url))
-                       ;; `url-port' reports the scheme default even when the
-                       ;; source has no explicit port.  The prefix check above
-                       ;; rejects a colon after the host, so 443 here is the
-                       ;; implicit HTTPS port rather than an admitted custom one.
+                       ;; `url-port' reports the scheme default even without
+                       ;; an explicit port.  The prefix check above rejects a
+                       ;; colon after the host, so 443 here is that default.
                        (= (url-port url) 443))
               string))
         (error nil)))))
@@ -720,6 +719,9 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
           (setq best (truncate-string-to-width (car names) width nil nil "…")))
         (propertize best 'help-echo full))))))
 
+;; When both kinds are present, MAX-WIDTH reserves 5 columns for the " · " and
+;; "◇ " separators and splits the rest three-to-two in favour of labels.  A
+;; collections-only cell reserves 2 columns for its "◇ " prefix.
 (defun hey-model--row-memberships (posting max-width)
   "Return a compact membership cell for POSTING within MAX-WIDTH columns."
   (let* ((label-records (hey-posting-labels posting))
@@ -807,10 +809,10 @@ The frozen layouts are:
   `narrow'  [sender subject memberships date]
   `minimal' [sender subject date]
 
-Unseen subjects carry a leading marker and bold face; only an explicit
-`unseen' state gets that presentation, so a true `seen' value and the
-`unknown' state of search rows both render plainly.  Memberships expose
-their complete values via `help-echo'."
+Unseen subjects carry a leading marker and `hey-unseen-face'; only an
+explicit `unseen' state earns that presentation, so `seen' values and the
+`unknown' state of search rows render plainly.  Memberships expose their
+complete values via `help-echo'."
   (let* ((subject (hey-posting-subject posting))
          (subject-cell
           (if (eq (hey-posting-seen posting) 'unseen)
@@ -842,6 +844,8 @@ their complete values via `help-echo'."
   "Format preamble LABEL and Markdown-safe VALUE with aligned indentation."
   (format "%-16s%s\n" (concat label ":") (hey-model--markdown-escape value)))
 
+;; `hydrated' means the CLI fetched a body which was itself empty, so this
+;; description only renders when the body string is absent.
 (defun hey-model--body-state-description (state)
   "Return a Markdown-safe human description of entry body STATE."
   (pcase state
@@ -856,9 +860,8 @@ their complete values via `help-echo'."
   "Return the package-owned Markdown scaffold for normalized THREAD.
 
 Metadata is sanitized and Markdown-escaped.  Entry bodies are already
-Markdown from the CLI and are inserted unchanged; their headings do not define
-UI entry boundaries.  The preamble order is subject, senders, messages shown,
-account, origin, labels, and collections, followed by an optional notice."
+Markdown from the CLI and are inserted unchanged; their headings do not
+define UI entry boundaries."
   (let ((parts nil)
         (entries (hey-thread-entries thread)))
     (push (hey-model--thread-field "Subject" (hey-thread-subject thread)) parts)

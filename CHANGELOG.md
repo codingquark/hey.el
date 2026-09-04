@@ -4,15 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- Stop presenting `/` search results as unseen. Search responses carry no
-  authoritative `seen` field, so their read state is now `unknown` and their
-  rows show neither the unseen marker nor `hey-unseen-face`; box, bundle,
-  label, and collection postings keep the true-only seen rule.
-- Explain a missing or unusable HEY CLI actionably: `exec-path` discovery names
-  the CLI baseline and how to install or point at it, an invalid
-  `hey-executable` says how to correct or clear it without any fallback, and a
-  process-start `file-missing` is classified only after revalidating the
-  resolved executable, so no path or operating-system text reaches the list.
+- Show `[Load more]` below lists with another page.  `RET` or mouse-2 activates
+  the control; `M` remains available.  The control hides during requests and
+  after exhaustion, and activation keeps point on the last loaded row.
+- Render `/` search results without seen or unseen styling because search
+  responses have no authoritative `seen` field.  Other posting sources retain
+  the true-only seen rule.
+- Report a missing or unusable HEY CLI with package-owned guidance.  Discovery
+  and configured-path failures remain distinct, and no candidate path or
+  operating-system text reaches the list.
 
 ## 0.1.0 - 2026-09-03
 

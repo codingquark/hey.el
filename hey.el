@@ -19,6 +19,7 @@
 
 ;;; Code:
 
+(require 'button)
 (require 'cl-lib)
 (require 'hl-line)
 (require 'subr-x)
@@ -107,10 +108,11 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
     (define-key map (kbd "SPC") #'scroll-up-command)
     (define-key map (kbd "DEL") #'scroll-down-command)
     (define-key map (kbd "RET") #'hey-follow-link)
+    ;; Keep Markdown table and folding commands unavailable.
     (define-key map (kbd "TAB") #'ignore)
     (define-key map (kbd "<backtab>") #'ignore)
     map)
-  "Restrictive keymap for `hey-thread-mode'.")
+  "Keymap for `hey-thread-mode': navigation and reading only.")
 
 (defvar-local hey--account nil)
 (defvar-local hey--configured-account nil)
@@ -132,7 +134,7 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
 (defvar-local hey--operation-overrides nil)
 
 (defvar hey--main-buffer nil
-  "Live primary HEY list buffer, regardless of its state-derived name.")
+  "Live primary HEY list buffer; `hey' reuses it across renamings.")
 
 (defconst hey--list-layouts
   '((wide . ((date "Date" 16)
@@ -154,7 +156,7 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
   "Column fields, titles, and preferred widths for each list layout.")
 
 (defconst hey--wide-subject-share 3
-  "Subject shares of flexible space in the wide list layout.")
+  "Shares of flexible space given to Subject in the wide list layout.")
 
 (defconst hey--wide-flex-shares 5
   "Total shares of flexible space in the wide list layout.")
@@ -162,9 +164,8 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
 (defun hey--call (operation &rest arguments)
   "Call named CLI OPERATION with ARGUMENTS.
 
-Buffer-local overrides exist solely for synthetic prototypes and tests; an
-override still replaces a named operation rather than the private process
-primitive."
+Buffer-local overrides exist for the demo and tests.  An override replaces
+a named operation, never the private process primitive."
   (let ((override (alist-get operation hey--operation-overrides)))
     (apply (or override operation) arguments)))
 
@@ -391,6 +392,18 @@ cell's help text."
   (while (and (not (eobp)) (null (tabulated-list-get-id)))
     (forward-line 1)))
 
+(defun hey--last-row ()
+  "Move point to the last real posting row, when one exists."
+  (goto-char (point-max))
+  (while (and (> (line-number-at-pos) 1) (null (tabulated-list-get-id)))
+    (forward-line -1)))
+
+(defun hey--insert-footer-line (text)
+  "Insert footer TEXT below the table, leaving a blank line above it."
+  (goto-char (point-max))
+  (unless (bolp) (insert "\n"))
+  (insert "\n" text "\n"))
+
 (defun hey--render-list (&optional preserve-point width)
   "Render cached state, preserving identity when PRESERVE-POINT is non-nil.
 
@@ -402,10 +415,8 @@ When WIDTH is non-nil, use it for responsive column selection."
     (hey--configure-columns width)
     (setq tabulated-list-entries #'hey--tabulated-entries)
     (tabulated-list-print preserve-point)
-    (when-let* ((message (hey--state-message)))
-      (goto-char (point-max))
-      (unless (bolp) (insert "\n"))
-      (insert "\n" message "\n"))
+    (dolist (text (list (hey--state-message) (hey--load-more-button)))
+      (when text (hey--insert-footer-line text)))
     (cond
      ((and identity (equal identity (tabulated-list-get-id))) nil)
      (identity
@@ -429,34 +440,36 @@ When WIDTH is non-nil, use it for responsive column selection."
                       (hey--loading "loading")
                       ((and hey--error hey--stale) "stale")
                       (hey--error "error")
-                      ((and (hey-source-p hey--source)
-                            (not (hey-source-exhausted hey--source)))
-                       "more available")
+                      ((hey--continuation-p) nil)
                       (t "up to date")))
-         (state (propertize
-                 (if hey--warnings
-                     (concat base-state ", partial")
-                   base-state)
-                 'face (cond
-                        (hey--error 'hey-error-face)
-                        (hey--warnings 'hey-warning-face)
-                        (t 'hey-status-face))))
+         (state (and (or base-state hey--warnings)
+                     (propertize
+                      (mapconcat #'identity
+                                 (delq nil (list base-state
+                                                 (and hey--warnings "partial")))
+                                 ", ")
+                      'face (cond
+                             (hey--error 'hey-error-face)
+                             (hey--warnings 'hey-warning-face)
+                             (t 'hey-status-face)))))
          (updated (and hey--last-refreshed
                        (format-time-string "%H:%M" hey--last-refreshed)))
          (layout (or hey--layout
                      (hey--layout-for-width (hey--minimum-window-width)))))
     (string-join
-     (pcase layout
-       ('wide
-        (delq nil (list "HEY" (hey--account-title) (hey--source-title)
-                        (format "%d shown" count) state
-                        (and updated (concat "updated " updated)))))
-       ('medium
-        (list "HEY" (hey--account-title) (hey--source-title)
-              (format "%d shown" count) state))
-       ('narrow
-        (list "HEY" (hey--source-title) (format "%d shown" count) state))
-       (_ (list "HEY" (hey--source-title) (number-to-string count) state)))
+     (delq nil
+           (pcase layout
+             ('wide
+              (list "HEY" (hey--account-title) (hey--source-title)
+                    (format "%d shown" count) state
+                    (and updated (concat "updated " updated))))
+             ('medium
+              (list "HEY" (hey--account-title) (hey--source-title)
+                    (format "%d shown" count) state))
+             ('narrow
+              (list "HEY" (hey--source-title) (format "%d shown" count) state))
+             (_ (list "HEY" (hey--source-title)
+                      (number-to-string count) state))))
      " · ")))
 
 (defun hey--resize-buffer (&optional width)
@@ -484,6 +497,12 @@ This function never calls the transport."
           (hey-source-exhausted copy) nil
           (hey-source-current-page copy) nil)
     copy))
+
+(defun hey--continuation-p ()
+  "Return non-nil when the current source has an unconsumed next page."
+  (and (hey-source-p hey--source)
+       (not (hey-source-exhausted hey--source))
+       (hey-source-continuation hey--source)))
 
 (defun hey--dispatch-source (source page owner source-key generation success failure)
   "Read SOURCE at PAGE for OWNER and deliver callbacks tagged by state.
@@ -601,6 +620,23 @@ the named operation's result."
   (interactive)
   (hey--refresh t))
 
+(defun hey--load-more-button ()
+  "Return the footer load-more button, or nil when nothing more can load."
+  (when (and hey--records (not hey--loading) (hey--continuation-p))
+    (with-temp-buffer
+      (insert-text-button "[Load more]" :type 'hey-load-more-button)
+      (buffer-string))))
+
+(defun hey--load-more-action (_button)
+  "Append the next page for BUTTON, anchoring point on the last loaded row."
+  (hey--last-row)
+  (hey-load-more))
+
+;; Standard button bindings provide RET and mouse-2.
+(define-button-type 'hey-load-more-button
+  'action #'hey--load-more-action
+  'help-echo "Load the next page (RET, mouse-2, or M)")
+
 (defun hey--select-account (accounts requested)
   "Return REQUESTED from normalized ACCOUNTS, or signal a clear error."
   (or (cl-find requested accounts :key #'hey-account-id :test #'equal)
@@ -655,8 +691,8 @@ GENERATION and TAG identify the startup session."
     (if hey--configured-account
         (hey--start-account-list
          buffer generation tag hey--configured-account)
-      ;; Ask for auth first: a logged-out CLI should reach the tailored auth
-      ;; error without an earlier authenticated account-list request failing.
+      ;; Query auth first so a logged-out CLI reaches the tailored auth error
+      ;; rather than an account-list failure.
       (setq hey--request
             (hey--call
              'hey-cli-auth-status buffer tag generation
@@ -1186,7 +1222,7 @@ FACE defaults to `hey-status-face'."
       (user-error "Point is not at a supported HEY application link"))))
 
 (defun hey--revert-buffer (_ignore-auto _noconfirm)
-  "Asynchronously refresh the current list through the shared funnel."
+  "Asynchronously refresh the current list with `hey--refresh'."
   (hey--refresh nil))
 
 (define-derived-mode hey-list-mode tabulated-list-mode "HEY-List"
@@ -1246,9 +1282,8 @@ FACE defaults to `hey-status-face'."
   (buffer-disable-undo)
   (read-only-mode 1))
 
-;; `define-derived-mode' installs the parent map.  Remove it deliberately: the
-;; package-owned map retains text navigation while excluding Markdown editing,
-;; export, preview, process, folding, image, math, and mouse-link commands.
+;; Keep text navigation while excluding Markdown editing, export, and process
+;; commands.
 (set-keymap-parent hey-thread-mode-map hey-common-map)
 
 (add-hook 'window-size-change-functions #'hey--window-size-change)

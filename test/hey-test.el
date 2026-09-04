@@ -387,6 +387,101 @@
       (should (hey-source-exhausted hey--source))
       (should-not (hey-source-continuation hey--source)))))
 
+(ert-deftest hey-ui-load-more-button-appends-and-anchors-the-last-row ()
+  "Append through the footer control without moving the reading position."
+  (hey-test-with-list
+    (let ((responses
+           (list
+            (hey-test--postings-envelope
+             (list (hey-test--posting 501 901 "First")
+                   (hey-test--posting 502 902 "Second"))
+             "cursor-3")
+            (hey-test--postings-envelope
+             (list (hey-test--posting 503 903 "Third")))))
+          (pages '()))
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_account _box page _owner _key _generation success _failure)
+                    (push page pages)
+                    (funcall success (pop responses))))))
+      (hey-refresh)
+      (should-not (string-match-p "up to date" (hey--status-header)))
+      (goto-char (point-min))
+      (should (eq (key-binding (kbd "RET")) #'hey-open))
+      (should (re-search-forward (regexp-quote "[Load more]") nil t))
+      (let ((button (match-beginning 0)))
+        (forward-line 1)
+        (should (= (point) (point-max)))
+        (should (> button (progn (hey--last-row) (point))))
+        (should (equal (tabulated-list-get-id) '("101" "502")))
+        (goto-char button)
+        (should (eq (key-binding (kbd "RET")) #'push-button))
+        (should (eq (key-binding [mouse-2]) #'push-button))
+        (push-button))
+      (should (equal (nreverse pages) (list nil "cursor-3")))
+      (should (= (length hey--records) 3))
+      (should (equal (tabulated-list-get-id) '("101" "502")))
+      (should-not (string-match-p (regexp-quote "[Load more]") (buffer-string)))
+      (should (string-match-p "up to date" (hey--status-header))))))
+
+(ert-deftest hey-ui-load-more-button-visibility-follows-pagination-state ()
+  "Show the control only when loaded rows can be extended."
+  (hey-test-with-list
+    (let ((result (hey-model-normalize-postings
+                   (hey-test--postings-envelope
+                    (list (hey-test--posting 501 901 "Row")) "cursor-2")
+                   hey--source)))
+      (setq hey--records (plist-get result :value)
+            hey--source (plist-get result :source)))
+    (should (equal (hey-source-continuation hey--source) "cursor-2"))
+    (hey--render-list)
+    (should (string-match-p (regexp-quote "[Load more]") (buffer-string)))
+    (dolist (state '("loading" "stale" "error" "partial" "up to date"))
+      (should-not (string-match-p state (hey--status-header))))
+    (let ((hey--loading t))
+      (hey--render-list)
+      (should-not (string-match-p (regexp-quote "[Load more]") (buffer-string)))
+      (should (string-match-p "loading" (hey--status-header))))
+    (let ((hey--records nil))
+      (hey--render-list)
+      (should-not (string-match-p (regexp-quote "[Load more]") (buffer-string))))
+    (setf (hey-source-continuation hey--source) nil
+          (hey-source-exhausted hey--source) t)
+    (hey--render-list)
+    (should-not (string-match-p (regexp-quote "[Load more]") (buffer-string)))
+    (should (string-match-p "up to date" (hey--status-header)))))
+
+(ert-deftest hey-ui-append-failure-keeps-the-load-more-control ()
+  "Keep the control available after a failed append."
+  (hey-test-with-list
+    (let ((fail-append nil))
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_account _box page _owner _key _generation success failure)
+                    (cond
+                     ((and page fail-append)
+                      (funcall failure
+                               (make-hey-error :category 'network
+                                               :message "Synthetic offline")))
+                     (page
+                      (funcall success
+                               (hey-test--postings-envelope
+                                (list (hey-test--posting 502 902 "Second"))
+                                "cursor-3")))
+                     (t
+                      (funcall success
+                               (hey-test--postings-envelope
+                                (list (hey-test--posting 501 901 "First"))
+                                "cursor-2"))))))))
+      (hey-refresh)
+      (setq fail-append t)
+      (hey-load-more)
+      (should (equal (hey-source-continuation hey--source) "cursor-2"))
+      (should (string-match-p (regexp-quote "[Load more]") (buffer-string)))
+      (setq fail-append nil)
+      (hey-load-more)
+      (should (= (length hey--records) 2)))))
+
 (ert-deftest hey-ui-ignores-out-of-order-generation-callbacks ()
   (hey-test-with-list
     (let (successes)
@@ -522,7 +617,7 @@
               (kill-buffer buffer))))))))
 
 (ert-deftest hey-ui-missing-executable-remediation-appears-once ()
-  "The list shows transport guidance verbatim and adds one retry affordance."
+  "The list shows transport guidance verbatim and one retry instruction."
   (save-window-excursion
     (let ((hey-executable nil)
           (hey-account nil)

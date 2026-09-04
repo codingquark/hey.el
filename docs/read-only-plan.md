@@ -1,15 +1,14 @@
 # Read-only HEY integration for Emacs
 
-**Status:** approved for local implementation; human gates remain
-**Last updated:** 2026-09-03
-**Working name:** `hey` (`hey.el`)
-**Initial scope:** read-only mail browsing only
+**Status:** read-only reader implemented; dogfood and MELPA submission remain
+**Last updated:** 2026-09-04
+**Package:** `hey` (`hey.el`)
+**Scope:** read-only mail browsing only
 **Repository:** <https://github.com/codingquark/hey.el>
 **License:** MIT
 
-This document is the durable context and decision record for building an
-Emacs-native interface on top of the official `hey` CLI. It exists so the work
-can resume correctly after context compaction or in a new session.
+This document records the architecture, scope, and decisions for the
+Emacs-native interface to the official `hey` CLI.
 
 ## Executive decision
 
@@ -29,10 +28,9 @@ The package must not contain commands for composing, replying, creating drafts,
 marking seen/unseen, moving, bubbling, labeling, screening, trashing, spamming,
 or otherwise mutating server state.
 
-The initial interface should be useful because it is idiomatic Emacs—not merely
-because it can invoke a CLI. Text navigation, minibuffer completion, stable
-buffers, responsive layouts, copy/search behavior, and predictable window
-management are primary design requirements.
+The interface uses idiomatic Emacs text navigation, minibuffer completion,
+stable buffers, responsive layouts, copy/search behavior, and predictable
+window management.
 
 The primary `hey` command opens the configured account's Imbox directly in the
 list view. Account, box, label, collection, and search selection are deliberate
@@ -59,14 +57,13 @@ Primary sources:
 
 ## Current local facts
 
-The initial compatibility baseline is HEY CLI 1.4.0, release commit
+The compatibility baseline is HEY CLI 1.4.0, release commit
 `980cdc2021cbf672d4735ba0243e9a2c0568a465`. Source-contract review also used
 commit `db24d024a42fa389728a152db925d705245c4fed`; its intervening changes from
 the release are documentation-only.
 
-The package provisionally supports Emacs 28.2 or newer because 28.2 is the
-exact oldest CI target and markdown-mode 2.8 already supports it. CI exercises 28.2 and
-the current stable release, Emacs 30.2. Machine-specific binaries, checkout paths,
+The package supports Emacs 28.2 or newer. CI exercises Emacs 28.2 and the
+current stable release, Emacs 30.2. Machine-specific binaries, checkout paths,
 and private research provenance belong only in the ignored local project
 ledger.
 
@@ -98,10 +95,10 @@ so opening a thread in `hey` must not mark it seen. `bundle view` is admitted
 because ordinary box results can contain bundle rows with no `topic_id`; it is
 the read-only route to those rows' unseen child threads.
 
-Other additive 1.4.0 read surfaces—`contact threads`, specialized `set-aside`
-views, `search filters`, Screener history/listing, and attachment metadata—stay
-deferred. A future milestone must add each one explicitly rather than widening
-the generic runner.
+Other additive 1.4.0 read surfaces—`contact threads`, specialized
+`set-aside` views, `search filters`, Screener history/listing, and attachment
+metadata—stay deferred. A future milestone must add each one explicitly rather
+than widening the generic runner.
 
 ### Explicitly excluded from the first release
 
@@ -158,13 +155,13 @@ strict read-only phase because the TUI itself exposes mutation commands.
 9. **Emacs-native, not web-layout mimicry.** Use buffers, minibuffer completion,
    familiar navigation, and optional windows—not a permanent browser-like
    sidebar.
-10. **Prototype before real integration.** Contract-informed fixtures, the
-    pure model/builders, and a fake asynchronous adapter drive task-based UI
-    prototypes before the real process transport is connected to the UI.
+10. **Fixture-driven development.** Contract-informed fixtures, the pure
+    model/builders, and a fake asynchronous adapter validate the UI without
+    live transport.
 
-## Proposed package dependency graph
+## Package dependency graph
 
-Use three files, not a facade plus three implementation files:
+Use three files:
 
 ```text
 hey-model.el     pure records, JSON normalization, formatting
@@ -185,7 +182,7 @@ Avoid dependency cycles and free references to custom variables defined in an
 unloaded module. The CLI layer exposes named read operations backed by a closed
 verb/flag allowlist; its generic process primitive remains private.
 
-Planned files:
+Repository files:
 
 ```text
 hey.el
@@ -204,10 +201,8 @@ Makefile
 .github/workflows/ci.yml
 ```
 
-These paths are relative to the root of the standalone package repository, not
-this Emacs configuration repository. Keeping the libraries at repository root
-makes direct checkout loading, package building, and an eventual MELPA recipe
-straightforward.
+These paths are relative to the package repository root. Keeping the libraries
+there supports direct checkout loading, package building, and MELPA packaging.
 
 Future write or calendar support must not be inserted into these files merely
 for convenience. Candidate future modules are `hey-compose.el` and
@@ -369,12 +364,13 @@ representations, and additional future keys.
   platform-appropriate per-user state location; on XDG systems,
   `~/.local/state/emacs/hey/` is an example, not a hard-coded universal path.
 - Ensure the directory is local, outside Git worktrees, and has no
-  `.hey/config.json` in its ancestry. Create it with mode `0700` where supported.
+  `.hey/config.json` in its ancestry. Create it with mode `0700` where
+  supported.
   Explicit `--base-url` and `--account` flags override valid repository values,
   but a malformed local file is parsed before those flags are applied; the
   neutral working directory also protects future invocations if the CLI adds
   more repository-local settings.
-- Pin `--base-url https://app.hey.com` with no v1 customization. Validated
+- Pin `--base-url https://app.hey.com`; it is not customizable. Validated
   application URLs must use that exact HTTPS origin, with no userinfo or custom
   port.
 - Pass `--account <id|all>` on every account-sensitive request.
@@ -399,7 +395,7 @@ Copy `process-environment` per request, then:
 - remove inherited `HEY_CABLE_URL`;
 - remove inherited `HEY_SETUP_AGENT`;
 - rely on CLI-owned stored authentication. Removing `HEY_TOKEN` intentionally
-  excludes environment-only bearer-token authentication from v1.
+  excludes environment-only bearer-token authentication.
 
 Never invoke `hey auth token` and never duplicate the token into auth-source or
 Emacs variables.
@@ -456,11 +452,10 @@ Provide a small ephemeral `*hey-log*` buffer, but redact aggressively:
 A list or thread buffer may show a concise nonfatal banner with a command to
 inspect the redacted log.
 
-Search prompts must opt out of minibuffer history (for example, by using a
-non-recording history argument) because this configuration enables
-`savehist-mode`. The active query exists only in buffer-local source state. It
-must not appear in process names, diagnostic messages, public buffer names, or
-the savehist file.
+Search prompts use non-recording minibuffer history so `savehist-mode` cannot
+persist queries. The active query exists only in buffer-local source state. It
+must not appear in process names, diagnostics, public buffer names, or the
+savehist file.
 
 Search builders place every option before a literal `--`, followed by the
 positional query, so a query beginning with a dash is data rather than a flag.
@@ -548,7 +543,7 @@ weight, collections retain the `◇` marker, and warnings and failures retain
 explicit text. Changing themes or customizing a face updates existing buffers
 through symbolic face properties and requires no data refresh.
 
-## UX proposal
+## UX design
 
 ### 1. Summary/list buffer
 
@@ -580,19 +575,23 @@ from the list buffer and uses the minibuffer without persistent history.
 Example status header and wide layout:
 
 ```text
-HEY · Personal · Imbox · 37 shown · more available · updated 11:42
+HEY · Personal · Imbox · 37 shown · updated 11:42
   Date             Sender             Subject              Labels           Summary
 ● Today 10:31      Alice Example      Design review moved  Work, Planning   Friday works…
   Yesterday 07:56  Basecamp           Receipt for HEY      Receipts         Your receipt…
+
+[Load more]
 ```
 
 Example narrow layout:
 
 ```text
-HEY · Personal · Imbox · 37 shown · more available
+HEY · Personal · Imbox · 37 shown
   Sender              Subject                              Date
 ● Alice Example       Design review moved                  Today 10:31
   Basecamp            Receipt for HEY                      Yesterday 07:56
+
+[Load more]
 ```
 
 Rules:
@@ -634,12 +633,18 @@ Rules:
   selected layout budgets all available width without horizontal takeover;
 - choose the minimum width among visible windows showing the buffer and never
   issue a network request for resize;
-- use `tabulated-list-use-header-line` nil so `tabulated-list` inserts its column
-  headings as the first in-buffer line while preserving identity-aware
+- use `tabulated-list-use-header-line` nil so `tabulated-list` inserts its
+  column headings as the first in-buffer line while preserving identity-aware
   `(tabulated-list-print t)` redraw;
 - reserve the real, sticky `header-line-format` for account, source, row count,
-  continuation/loading/stale state, and last successful refresh; adapt or
-  abbreviate it by width and never include private search text;
+  loading/stale/error state, and last successful refresh; adapt or abbreviate it
+  by width and never include private search text; a source with an unconsumed
+  next page contributes no status word;
+- offer continuation as an in-buffer `[Load more]` text button below the table
+  and its footer notices, built with the standard `button` APIs and bound to the
+  same load-more funnel as `M`; show it only for loaded rows with an unconsumed
+  continuation and no request in flight, anchor point on the last loaded row
+  when it is pushed, and keep a failed append retryable;
 - place initial point after the in-buffer column heading and make row-navigation
   commands skip every non-row status or heading line;
 - local column sorting stays disabled because sorting one accumulated prefix of
@@ -653,14 +658,15 @@ Rules:
   than represented by a blank buffer; actionable failures also appear in the
   buffer instead of existing only in the compact header.
 
-Proposed initial list keys:
+List keys:
 
 ```text
 RET       open thread in the same window
 o         open thread in another window
 n / p     next / previous row
 g         refresh from the first source page
-M         load more using the source's cursor or numeric page
+M         load more using the source's cursor or numeric page,
+          or push the `[Load more]` control with RET / mouse-2
 B         choose box
 /         search
 a         choose account
@@ -734,11 +740,11 @@ Rules:
   invalid resolved URLs remain inert;
 - body text behaves like ordinary Emacs text for search, copy, narrowing, and
   selection;
-- older-message collapse policy is decided only after prototype testing;
+- keep older-message collapsing deferred until dogfood evidence supports it;
 - no message is marked seen;
 - body text is never written to a package cache.
 
-Proposed core thread keys:
+Core thread keys:
 
 ```text
 n / p     next / previous HEY entry
@@ -784,8 +790,8 @@ not rearrange unrelated user windows unexpectedly.
   records; the synchronous-shaped revert hook never performs network work.
 - The process callback updates records and calls `(tabulated-list-print t)`.
 - A refresh re-fetches the first response for the current
-  account/source/query—not the default Imbox—and replaces accumulated rows only
-  after success.
+  account/source/query—not the default Imbox—and replaces accumulated rows
+  only after success.
 - For box, bundle, label, and collection views, `M` consumes the response's
   opaque `next_page` value and appends records. Accept only a cursor returned by
   the current source session.
@@ -802,9 +808,10 @@ not rearrange unrelated user windows unexpectedly.
   detect a non-advancing cursor response whose rows add no new identities.
   Numeric search pages may overlap as server results change, so deduplicate
   them by account plus `topic_id` while continuing until an empty page.
-- Point restoration initially relies on `(tabulated-list-print t)`, which
-  restores by row ID. Augment it only if interactive multi-window tests show
-  window-start jumps.
+- The `[Load more]` button and `M` use the same load-more path. The button hides
+  while a request is in flight.
+- Point restoration uses `(tabulated-list-print t)`, which restores by row ID.
+  Add window-start handling only if interactive multi-window tests require it.
 - Refresh/loading errors retain stale rows and show their state; first load uses
   a non-row loading presentation.
 - Do not fetch `--all` by default.
@@ -839,16 +846,9 @@ structure, and release claims. Subagents may inspect, implement bounded
 disjoint work, or review, but their completion reports are evidence to verify,
 not proof by themselves.
 
-### Repository and local-checkout workflow
+### Repository workflow
 
-Create the package repository at a stable local path. Examples below call it
-`<checkout>`; no public artifact should depend on a developer's absolute path.
-
-```text
-<checkout>/
-```
-
-Use an ordinary MELPA-friendly package layout:
+The repository uses this MELPA-friendly layout:
 
 ```text
 hey.el
@@ -870,45 +870,9 @@ Makefile
 .elpaignore
 ```
 
-Once the repository exists, move this design record there and make that copy
-canonical. Leave only a pointer in this Emacs configuration rather than two
-independently edited plans.
-
-During active development, load the checkout directly from `config.org`:
-
-```elisp
-(add-to-list 'load-path (expand-file-name "<checkout>"))
-
-(use-package hey
-  :ensure nil
-  :commands hey)
-```
-
-`:ensure nil` matters because this configuration enables
-`use-package-always-ensure`; the checkout, not a package archive, supplies
-`hey`. This is the usual convenient package-author workflow: edits are
-available after reevaluation or restart without copying or reinstalling the
-package.
-
-Before MELPA publication, someone who wants to follow the public repository
-without editing it can install its URL with `package-vc-install`. After MELPA
-publication, this configuration can become simply:
-
-```elisp
-(use-package hey
-  :commands hey)
-```
-
-That works here because `use-package-always-ensure` is enabled. Users without
-that global setting add `:ensure t` or install `hey` with `package-install`.
-
-The development configuration may continue loading the checkout. A separate
-clean-install test must exercise a built package artifact so direct `load-path`
-use does not hide missing files, metadata, or declared dependencies.
-
-Personal `config.org` integration is a downstream change. Add it only after the
-standalone package loads independently, then tangle and commit the matching
-`config.el` change without copying package implementation into this repository.
+This file is the canonical design record. Development may load the checkout
+directly, while `make install-check` verifies the built package in an isolated
+Emacs environment.
 
 ### Agent execution protocol
 
@@ -960,7 +924,7 @@ Create the standalone repository and establish:
   `AGENTS.md`;
 - an Emacs version policy based on APIs actually required rather than the local
   Emacs 31.1 installation alone;
-- the installed HEY CLI 1.4.0 release as the initial compatibility target, with
+- the installed HEY CLI 1.4.0 release as the compatibility target, with
   the newer pinned source checkout used only as corroborating evidence;
 - declared package dependencies, including `markdown-mode`;
 - an ERT runner, shared test helper, scenario-driven fake executable, and CI
@@ -1084,9 +1048,10 @@ coherent reader slice. They are not deferred or implemented again as polish.
 only the fake executable; package loading and byte compilation stay clean.
 
 **Human gate:** after explicit approval, the user performs one authenticated
-read-only session against already-seen mail and confirms list → thread → return,
-bundle reading, box switching, refresh, pagination, help, and failure recovery
-without a terminal. Testing an unseen thread remains a separate approval.
+read-only session against already-seen mail and confirms list → thread →
+return, bundle reading, box switching, refresh, pagination, help, and failure
+recovery without a terminal. Testing an unseen thread remains separately
+approved.
 
 ### Milestone 5 — remaining first-release sources
 
@@ -1108,53 +1073,37 @@ cross-account/source isolation cases.
 **Human gate:** the user's task-based authenticated review confirms account,
 search, label, and collection navigation without cross-source state leakage.
 
-### Milestone 6 — evidence-driven refinement
+### Milestone 6 — dogfood, refinement, and publication
 
-Add only refinements supported by prototype or dogfood evidence:
+Implemented refinements include responsive columns, theme-owned row
+highlighting, and humanized list dates. The following remain evidence-driven:
 
-- responsive layout tuning, including bounded subject/summary allocation in
-  the wide layout and omission of an all-empty memberships column;
-- theme-owned current-row highlighting with a public opt-out;
-- humanized list timestamps without date grouping;
 - thread folding and origin-list next/previous navigation;
 - complete keyboard and accessibility review;
 - customization options that solve observed needs;
 - body-link refinements and optional `org-store-link` integration;
-- an optional preview or richer dispatcher only after its own acceptance
-  decision.
+- an optional preview or richer dispatcher with its own acceptance decision.
 
-Do not use this milestone to add new CLI surfaces or mutation commands.
-
-**Gate:** checkdoc, package-lint, byte compilation, ERT, and manual narrow/wide
-and keyboard-only exercises pass without unexplained regressions.
-
-### Milestone 7 — dogfood, package, and release
-
-Use the development checkout as the normal mail reader for one or two weeks
-while keeping the public branch usable. Fix observed reader defects before
+Do not add CLI surfaces or mutation commands through refinement work. Use the
+development checkout as the normal reader and fix observed defects before
 adding scope.
 
-Before tagging the first release:
+Package construction, clean-install verification, release approval, and the
+v0.1.0 tag are complete. MELPA submission waits until the repository satisfies
+the public-maintenance requirement on 2026-10-03. Before submission:
 
-- test the supported Emacs matrix in CI;
+- keep the supported Emacs matrix green;
 - install the built package into a fresh temporary `package-user-dir` under
   `emacs -Q`;
-- verify package metadata, declared dependencies, autoloads, minimum Emacs
-  version, commentary, license, URL, and clean byte compilation;
-- confirm no fixture contains private data and no package file contains a
-  machine-specific absolute path;
-- document CLI installation and supported versions, configuration, commands,
-  privacy, CLI-owned caching, troubleshooting, and the read-only boundary;
-- update the changelog and tag a coherent first version;
-- test the proposed MELPA recipe locally before submission;
-- satisfy MELPA's current public-maintenance waiting period before opening the
-  recipe pull request, and never mark its checklist item complete early;
-- use versioned release tags so MELPA Stable can follow stable releases when
-  appropriate.
+- verify metadata, dependencies, autoloads, the Emacs floor, commentary,
+  license, URL, and byte compilation;
+- confirm fixtures and package files contain no private data or machine paths;
+- keep installation, configuration, command, privacy, cache, troubleshooting,
+  and read-only documentation current;
+- revalidate the MELPA recipe.
 
-**Release gate:** the orchestrator reruns all automated checks from a clean
-clone and presents the exact results. The user approves the release tag and
-MELPA submission.
+**Gate:** checkdoc, package-lint, byte compilation, ERT, manual narrow/wide and
+keyboard-only exercises, and a clean-clone package check pass.
 
 The project stops at a stable read-only reader. Write support requires a new
 design and safety review rather than another item in this delivery plan.
@@ -1229,8 +1178,10 @@ design and safety review rather than another item in this delivery plan.
 - valid list dates cover local today, calendar-day yesterday (including
   month/year boundaries), and older-date forms, while explicit offsets,
   missing values, and malformed timestamp fallbacks remain stable;
-- sticky header state reflects account, source, loading/staleness, continuation,
-  count, and successful refresh without exposing private search text;
+- sticky header state reflects account, source, loading/staleness, count, and
+  successful refresh without exposing private search text, and the in-buffer
+  `[Load more]` control tracks unconsumed continuations, hides itself while a
+  request is in flight, and anchors appends on the last loaded row;
 - initial point and `n`/`p` skip the in-buffer table heading and status lines;
 - refresh preserves identity and visible-window behavior;
 - resize changes columns without invoking transport;
@@ -1258,37 +1209,12 @@ The package repository must provide one documented command, expected to be
    undeclared dependencies, and development-only files.
 
 No automated test may resolve or invoke the real HEY CLI, contact a real
-account, or depend on this personal Emacs configuration.
+account, or depend on an external Emacs configuration.
 
 Authenticated validation is a separate, explicitly approved manual session.
 Use already-seen mail by default and record which read-only workflows were
 exercised without retaining message content. An unseen-thread probe requires
 its own approval.
-
-### Personal configuration integration
-
-Treat the Emacs configuration as a downstream consumer, not as the package's
-build tree:
-
-1. inventory `git status` here and preserve unrelated dirty work;
-2. add the development-checkout `load-path` and `use-package hey` declaration
-   to `config.org` only after the standalone package loads independently;
-3. tangle `config.org` to a temporary target and compare;
-4. regenerate `config.el` from `config.org`;
-5. commit matching `config.org` and `config.el` changes together, separately
-   from package-repository commits;
-6. run the required startup smoke test:
-
-```sh
-emacs --batch --init-directory=. --load init.el \
-  --eval '(message "startup ok")'
-```
-
-7. interactively test GUI PATH resolution and loading from the checkout.
-
-The package's own interactive workflow validation remains governed by the
-milestone gates above; configuring it here must not substitute for clean
-package testing.
 
 ## Precedents inspected
 
@@ -1339,8 +1265,8 @@ commits below when fresh source evidence is required.
   - rejected as the foundation because it is not a major mode, supplies less
     refresh/window integration, and is still evolving.
 - `magit-section`;
-  - architectural inspiration only initially; avoid taking the dependency
-    unless collapsible heterogeneous sections later prove valuable.
+  - use only as architectural inspiration; avoid taking the dependency unless
+    collapsible heterogeneous sections later prove valuable.
 
 ## Research provenance
 
@@ -1370,7 +1296,7 @@ validation, and a cautious responsive-layout experiment.
 - raw JSON plists in rendering code;
 - subject/query-derived public buffer names;
 - automatic `--all` fetching;
-- polling or notifications in the initial package;
+- polling or notifications;
 - mandatory persistent three-pane layout;
 - vtable as the package foundation;
 - early dependency on magit-section;
@@ -1380,26 +1306,20 @@ validation, and a cautious responsive-layout experiment.
 
 After context loss, resume in this order:
 
-1. Before repository bootstrap, read this document completely. Afterwards,
-   follow the pointer from this file and read the canonical package-repository
-   copy.
-2. Read `AGENTS.md` in the package repository and in this configuration before
-   changing either one.
-3. Inspect `git status` in both repositories; do not overwrite existing dirty
-   work.
+1. Read this document completely; this copy, in the package repository, is
+   canonical.
+2. Read `AGENTS.md` before changing the package.
+3. Inspect `git status`; do not overwrite existing dirty work.
 4. Identify the last completed milestone and rerun its automated gate before
    continuing.
 5. Before using CLI source as evidence, inspect a clean HEY CLI checkout, read
    its `AGENTS.md`, and record the exact commit being consulted in the ignored
    local ledger.
-6. Read the five durable research artifacts listed above as needed.
-7. Review the completed UX/oracle outputs linked above when a design question
-   reopens.
-8. Obtain explicit user approval before any live capture, authenticated manual
+6. Consult "Precedents inspected" and "Research provenance" when a design
+   question reopens.
+7. Obtain explicit user approval before any live capture, authenticated manual
    validation, or seen-state probe. Raw mailbox data must not enter an agent or
    model context.
-9. Contract, fixture, and pure transport work may proceed before UX sign-off;
-   real UI/transport integration waits for the Milestone 2 human gate.
-10. Give concurrent writers disjoint paths, and have the orchestrator inspect
-    the integrated diff and rerun its tests.
-11. Maintain the strict read-only allowlist through release.
+8. Give concurrent writers disjoint paths, and have the orchestrator inspect
+   the integrated diff and rerun its tests.
+9. Maintain the strict read-only allowlist through release.

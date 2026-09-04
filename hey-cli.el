@@ -11,11 +11,8 @@
 ;;; Commentary:
 
 ;; Exact, read-only command builders and the asynchronous process boundary for
-;; the HEY reader.  This library intentionally has no generic public command
-;; runner: only the named operations at the end of this file can start a
-;; subprocess.  In box, bundle, label, and collection posting responses, only a
-;; literal JSON true `seen' value means read; false, null, a missing field, or
-;; any other value means unread.  Search result rows carry no read state.
+;; the HEY reader.  This library has no generic public command runner: only the
+;; named operations at the end of this file start a subprocess.
 
 ;;; Code:
 
@@ -70,12 +67,10 @@ or a directory below an ancestor containing `.hey/config.json'."
   :group 'hey)
 
 (defconst hey-cli-minimum-version "1.4.0"
-  "Oldest official HEY CLI version supported by this package.
-
-The version preflight and discovery guidance both name this baseline.")
+  "Oldest official HEY CLI version supported by this package.")
 
 (defconst hey-cli--official-origin "https://app.hey.com"
-  "The only server origin allowed by the v1 reader.")
+  "The only server origin admitted in generated argv.")
 
 (defconst hey-cli--removed-environment-variables
   '("HEY_TOKEN" "HEY_BASE_URL" "HEY_ACCOUNT_ID" "HEY_DEBUG" "HEY_THEME"
@@ -332,10 +327,8 @@ and whose cdr lists the components that still need to be created."
     (pcase-let* ((`(,base . ,missing)
                   (hey-cli--working-directory-base expanded))
                  (directory base))
-      ;; Resolve conventional, trusted system aliases (for example macOS
-      ;; /var) once, then operate only on the canonical path.  Security checks
-      ;; below prevent traversal through mutable shared or foreign-owned
-      ;; ancestors.
+      ;; Resolve trusted system aliases (for example macOS /var) once, then
+      ;; operate only on the canonical path.
       (hey-cli--verify-working-tree directory)
       (dolist (component missing)
         (setq directory
@@ -357,10 +350,8 @@ and whose cdr lists the components that still need to be created."
         (unless (equal owner (user-uid))
           (error "HEY working directory must be owned by the current user")))
       (set-file-modes directory #o700)
-      ;; Re-stat after chmod.  This both verifies the intended privacy mode and
-      ;; catches a replacement of the leaf during preparation.  Trusted,
-      ;; non-writable ancestors make a later replacement impractical for a
-      ;; different local user before `make-process' opens the directory.
+      ;; Re-stat after chmod: this verifies the privacy mode and catches a leaf
+      ;; swapped during preparation.
       (unless (and (not (file-symlink-p (directory-file-name directory)))
                    (equal (file-attribute-user-id
                            (file-attributes directory 'integer))
@@ -406,10 +397,7 @@ or set `hey-executable'."
 (defun hey-cli--resolve-executable ()
   "Return a validated absolute path to the HEY executable.
 
-With nil `hey-executable' discover `hey' through option `exec-path'; a
-configured override is never replaced by a discovered program.  An unusable
-candidate signals `hey-cli-executable-missing' or
-`hey-cli-executable-configured'."
+A configured `hey-executable' is never replaced by a discovered program."
   (let ((candidate
          (if hey-executable
              (and (stringp hey-executable) hey-executable)
@@ -686,9 +674,8 @@ CATEGORY and EXIT-STATUS are used only for redacted diagnostics."
 (defun hey-cli-cancel-request (request)
   "Cancel an asynchronous HEY REQUEST.
 
-Its failure callback receives a `hey-error' in the `canceled' category if the
-owner buffer is still live.  UI source and generation checks remain the final
-guard against stale state updates."
+Its failure callback receives a `hey-error' in the `canceled' category when
+the owner buffer is still live."
   (when (and (hey-cli--request-p request)
              (not (hey-cli--request-completed request)))
     (setf (hey-cli--request-canceled request) t)
@@ -841,7 +828,7 @@ Deliver the result through SUCCESS or FAILURE."
 
 (defun hey-cli-box-view
     (account-id box page owner source-key generation success failure)
-  "Read BOX and PAGE in ACCOUNT-ID for OWNER, tagged SOURCE-KEY and GENERATION.
+  "Read BOX in ACCOUNT-ID for OWNER, tagged SOURCE-KEY and GENERATION.
 
 PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
   (hey-cli--start-process 'box-view
@@ -850,20 +837,18 @@ PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
 
 (defun hey-cli-bundle-view
     (account-id posting-id page owner source-key generation success failure)
-  "Read POSTING-ID and PAGE in ACCOUNT-ID for OWNER.
+  "Read POSTING-ID in ACCOUNT-ID for OWNER, tagged SOURCE-KEY and GENERATION.
 
-PAGE may be nil.  Tag the request with SOURCE-KEY and GENERATION, and deliver
-the result through SUCCESS or FAILURE."
+PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
   (hey-cli--start-process 'bundle-view
                           (hey-cli-build-bundle-view account-id posting-id page)
                           owner source-key generation success failure))
 
 (defun hey-cli-search
     (account-id query page owner source-key generation success failure)
-  "Search ACCOUNT-ID for QUERY at PAGE for OWNER.
+  "Search ACCOUNT-ID for QUERY for OWNER, tagged SOURCE-KEY and GENERATION.
 
-PAGE may be nil.  Tag the request with SOURCE-KEY and GENERATION, and deliver
-the result through SUCCESS or FAILURE."
+PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
   (hey-cli--start-process 'search
                           (hey-cli-build-search account-id query page)
                           owner source-key generation success failure))
@@ -887,10 +872,9 @@ Deliver the result through SUCCESS or FAILURE."
 
 (defun hey-cli-label-view
     (account-id label-id page owner source-key generation success failure)
-  "Read LABEL-ID and PAGE in ACCOUNT-ID for OWNER.
+  "Read LABEL-ID in ACCOUNT-ID for OWNER, tagged SOURCE-KEY and GENERATION.
 
-PAGE may be nil.  Tag the request with SOURCE-KEY and GENERATION, and deliver
-the result through SUCCESS or FAILURE."
+PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
   (hey-cli--start-process 'label-view
                           (hey-cli-build-label-view account-id label-id page)
                           owner source-key generation success failure))
@@ -906,10 +890,9 @@ Deliver the result through SUCCESS or FAILURE."
 
 (defun hey-cli-collection-view
     (account-id collection-id page owner source-key generation success failure)
-  "Read COLLECTION-ID and PAGE in ACCOUNT-ID for OWNER.
+  "Read COLLECTION-ID in ACCOUNT-ID for OWNER, tagged SOURCE-KEY and GENERATION.
 
-PAGE may be nil.  Tag the request with SOURCE-KEY and GENERATION, and deliver
-the result through SUCCESS or FAILURE."
+PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
   (hey-cli--start-process
    'collection-view
    (hey-cli-build-collection-view account-id collection-id page)

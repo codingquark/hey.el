@@ -3,7 +3,7 @@
 ;;; Commentary:
 
 ;; Build a byte-for-byte reproducible ustar archive from an explicit runtime
-;; allowlist.  This intentionally does not depend on package-build.
+;; allowlist, without depending on package-build.
 
 ;;; Code:
 

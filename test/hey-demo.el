@@ -60,7 +60,7 @@
   `(("id" . ,id) ,@(when topic `(("topic_id" . ,topic)))
     ("kind" . ,(or kind "topic")) ("name" . ,name) ("seen" . ,seen)
     ("creator" ("name" . ,sender))
-    ("summary" . "A safe synthetic excerpt for the interactive prototype.")
+    ("summary" . "A safe excerpt shown by the synthetic demo.")
     ("created_at" . "2026-09-03 10:31")
     ("folders" (("id" . 11) ("name" . "Planning"))
                (("id" . 12) ("name" . "Receipts"))

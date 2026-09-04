@@ -1,25 +1,23 @@
 # hey.el
 
-`hey.el` is a read-only Emacs interface to the official HEY CLI.  It is being
-built as a focused mail reader: browse boxes and bundles, search, inspect
-threads, and navigate labels or collections without exposing mailbox mutation
-commands.
+`hey.el` is a read-only Emacs interface to the official HEY CLI.  It browses
+boxes and bundles, searches mail, reads threads, and navigates labels and
+collections without exposing mailbox mutation commands.
 
 The project is maintained at <https://github.com/codingquark/hey.el>.
 
 ## Requirements
 
-- Emacs 28.2 or newer (provisional until the release gate);
-- `markdown-mode` 2.8 or newer;
-- the official HEY CLI, with version 1.4.0 as the initial compatibility
-  baseline.
+- Emacs 28.2 or newer
+- `markdown-mode` 2.8 or newer
+- HEY CLI 1.4.0 or newer
 
-Authentication remains owned by the HEY CLI.  The package does not accept or
-store bearer tokens.
+Authentication is owned by the HEY CLI.  The package does not accept or store
+bearer tokens.
 
-Box, bundle, label, and collection postings are shown as seen only when the CLI
+Box, bundle, label, and collection postings count as seen only when the CLI
 returns literal JSON `true` in their `seen` field; `false`, `null`, a missing
-field, or any other value is shown as unseen. Search results carry no
+field, or any other value is unseen.  Search results carry no
 authoritative `seen` field, so they are presented as neither seen nor unseen.
 
 ## Installation
@@ -56,14 +54,13 @@ The CLI is resolved lazily, when a request needs it: with the default nil
 `hey-executable`, `hey` is looked up in `exec-path`, so installing it after
 Emacs started needs a restart or an `exec-path` update.  Set `hey-executable`
 to an absolute local executable to skip that lookup; while it is set there is
-no fallback to another `hey`, so a stale or mistyped override fails loudly
-instead of quietly running a different program.
+no fallback to another `hey`, so a stale or mistyped override fails loudly.
 
 When the CLI cannot be used, `M-x hey` still opens the list and names the case
 that failed and what to change; press `g` to retry.  Guidance is package-owned,
 so candidate paths and operating-system errors stay out of the buffer.
 
-## Synthetic prototype review
+## Synthetic demo
 
 After `make bootstrap`, launch the complete asynchronous reader without a HEY
 installation, credentials, mailbox data, subprocess, or network access:
@@ -73,12 +70,12 @@ emacs -Q -L test/tmp/elpa/markdown-mode-2.8 -L . \
   -l test/hey-demo.el -f hey-demo
 ```
 
-Useful keys are `RET`/`o` to open, `n`/`p` to move, `g` to refresh, `M` to load
-more, `B` for boxes, `a` for accounts, `L`/`C` for labels/collections, `/` for
-search, `b`/`y` for validated HEY URLs, `?` for mode help, and `q` to return.
+Useful keys are `RET`/`o` to open, `n`/`p` to move, `g` to refresh, `M` or the
+`[Load more]` control at the bottom of the list to load more, `B` for boxes,
+`a` for accounts, `L`/`C` for labels/collections, `/` for search, `b`/`y` for
+validated HEY URLs, `?` for mode help, and `q` to return.
 
-A clean built-package installation is exercised by `make install-check`; it is
-separate from this convenient checkout workflow.
+`make install-check` exercises a clean installation of the built package.
 
 ## Appearance
 
@@ -90,6 +87,10 @@ including the current-row highlight.  Theme authors can customize
 `hey-error-face` without replacing the list, header-line, or Markdown faces
 owned by their respective modes.
 
+When the current source has another page ready, the list offers `[Load more]`
+at the bottom of the table; push it with `RET` or mouse-2, or press `M`.  The
+control uses the standard `button` face, so it follows the active theme.
+
 ## Read-only and privacy boundary
 
 The Emacs package has a closed allowlist of read operations.  It does not
@@ -99,13 +100,12 @@ is an explicit handoff to the official application, where write actions may be
 available.
 
 The package adds no body cache and does not persist search text.  The CLI can
-still refresh or migrate its own credentials, create an installation ID, and
-update its HTTP revalidation cache.  HEY CLI 1.4.0 also records its last-run
-version and may refresh CLI-owned copies of its agent `SKILL.md` after a
-successful command when the CLI version changes.  Ordinary CLI startup may
-also remove its own stale self-upgrade sidecar files and lock beside the CLI
-executable.  Those CLI-owned operational side effects are independent of
-mailbox mutation.
+still refresh or migrate its own credentials, create an installation ID, update
+its HTTP revalidation cache, record its last-run version, and refresh CLI-owned
+copies of its agent `SKILL.md` when the CLI version changes.  Ordinary CLI
+startup may also remove stale self-upgrade sidecar files and its lock beside
+the CLI executable.  These CLI-owned operational side effects are independent
+of mailbox mutation.
 
 ## Development
 
@@ -130,8 +130,8 @@ their pinned SHA-256 digests are still enforced.
 Individual targets are `test`, `compile`, `lint`, `package`, and
 `install-check`.  Every automated test binds `hey-executable` to the
 repository's scenario-driven fake executable; a missing fake is a hard failure,
-never a fallback to an installed `hey` program.  Tests exercising nil
-`hey-executable` stub the discovery lookup instead of using a real search path.
+never a fallback to an installed `hey` program.  Tests which exercise a nil
+`hey-executable` stub the discovery lookup.
 
 The package target creates a deterministic multi-file tar archive in `dist/`.
 Only `hey.el`, `hey-cli.el`, `hey-model.el`, `LICENSE`, and a generated
@@ -139,7 +139,7 @@ Only `hey.el`, `hey-cli.el`, `hey-model.el`, `LICENSE`, and a generated
 the package headers in `hey.el`; it is not tracked in the repository.
 
 See `docs/read-only-plan.md` for the architecture, scope, security properties,
-and milestone gates.
+and validation rules.
 
 ## License
 

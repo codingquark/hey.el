@@ -144,8 +144,8 @@ Every requested command is recorded in `hey-cli-test--discovered'."
 (defun hey-cli-test--assert-failure (failure patterns)
   "Assert FAILURE is a configuration failure matching every PATTERNS entry.
 
-Package-owned prose names no path or operating-system detail and leaves the
-retry affordance to the list."
+Package-owned prose names no path or operating-system detail; the list owns
+the retry instruction."
   (should (eq (hey-error-category failure) 'configuration))
   (let ((message (hey-error-message failure)))
     (dolist (pattern patterns)

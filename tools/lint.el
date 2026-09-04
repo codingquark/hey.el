@@ -18,9 +18,9 @@
   "Check the current buffer and fail batch execution on diagnostics."
   (let ((checkdoc-autofix-flag nil)
         (checkdoc-pending-errors nil))
-    ;; `checkdoc-batch' was added after the oldest supported Emacs.  Prevent
-    ;; the interactive display helper from clearing the diagnostic flag, then
-    ;; turn that flag into a batch failure ourselves.
+    ;; `checkdoc-batch' is newer than Emacs 28.2.  Prevent the interactive
+    ;; display helper from clearing the diagnostic flag, then turn that flag
+    ;; into a batch failure here.
     (cl-letf (((symbol-function 'checkdoc-show-diagnostics) #'ignore))
       (checkdoc-current-buffer t))
     (when checkdoc-pending-errors

@@ -1,8 +1,7 @@
-# Frozen v1 internal interfaces
+# Internal interfaces
 
-This document freezes the seams needed for parallel Milestone 1 work. Changing
-one of these names or callback shapes requires an orchestrator-reviewed update
-before dependent work continues.
+This document defines the frozen seams between the three libraries. Changes to
+these names or callback shapes require orchestrator review.
 
 ## JSON representation
 
@@ -116,7 +115,7 @@ the UI's final commit check as well.
 Named functions mirror every builder, without `build-`, for example
 `hey-cli-box-view` and `hey-cli-thread-read`. The private
 `hey-cli--start-process` is the only real subprocess primitive. Tests and the
-fake-backed prototype replace named operations, never the private primitive.
+synthetic demo override named operations, never the private primitive.
 
 ## UI session state
 
