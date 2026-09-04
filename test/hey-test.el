@@ -220,11 +220,33 @@
      (max 0 (1- (length tabulated-list-format)))
      (cl-loop for column across tabulated-list-format sum (cadr column))))
 
-(ert-deftest hey-ui-narrow-layout-fits-the-window-width ()
+(defun hey-test--column-start (name)
+  "Return the rendered column offset where table column NAME begins."
+  (let ((start tabulated-list-padding))
+    (cl-loop for column across tabulated-list-format
+             while (not (equal (car column) name))
+             do (cl-incf start (1+ (cadr column))))
+    start))
+
+(defun hey-test--rendered-row-line ()
+  "Return the first rendered table row as a string."
+  (goto-char (point-min))
+  (while (and (not (eobp)) (null (tabulated-list-get-id)))
+    (forward-line 1))
+  (buffer-substring (line-beginning-position) (line-end-position)))
+
+(defun hey-test--records-from (&rest postings)
+  "Return normalized records for synthetic POSTINGS."
+  (plist-get (hey-model-normalize-postings
+              (hey-test--postings-envelope postings) hey--source)
+             :value))
+
+(ert-deftest hey-ui-narrow-layout-leaves-the-right-gutter ()
   (hey-test-with-list
     (dolist (width '(58 40))
       (hey--resize-buffer width)
-      (should (= (hey-test--configured-table-width) width)))))
+      (should (= (hey-test--configured-table-width)
+                 (- width hey--list-right-gutter))))))
 
 (ert-deftest hey-ui-empty-memberships-expand-subject-to-its-cap ()
   (hey-test-with-list
@@ -246,7 +268,9 @@
       (should (= (length (cadar (hey--tabulated-entries))) 3))
       (should (= (hey-test--column-width "Subject") 70))
       (should (= (hey-test--column-width "Sender") 24))
-      (should (= (hey-test--configured-table-width) 130)))))
+      (should (= (hey-test--column-width "When") 12))
+      (should (= (hey-test--configured-table-width) 110))
+      (should (< (hey-test--configured-table-width) 130)))))
 
 (ert-deftest hey-ui-populated-memberships-retain-their-column ()
   (hey-test-with-list
@@ -262,8 +286,9 @@
                      "When")))
     (should (= (length (cadar (hey--tabulated-entries))) 4))
     (should (= (hey-test--column-width "Subject") 70))
-    (should (= (hey-test--column-width "Sender") 23))
-    (should (= (hey-test--configured-table-width) 130))))
+    (should (= (hey-test--column-width "Sender") 21))
+    (should (= (hey-test--column-width "When") 12))
+    (should (= (hey-test--configured-table-width) 128))))
 
 (ert-deftest hey-ui-layouts-keep-subject-first-with-time-at-end ()
   (hey-test-with-list
@@ -282,7 +307,90 @@
       (hey--render-list nil (car case))
       (should (equal (mapcar #'car (append tabulated-list-format nil))
                      (cdr case)))
-      (should (= (hey-test--configured-table-width) (car case))))))
+      (should (= (hey-test--column-width "When") 12))
+      (should (= (hey-test--configured-table-width)
+                 (- (car case) hey--list-right-gutter))))))
+
+(ert-deftest hey-ui-when-column-keeps-its-width-and-the-table-fits ()
+  (hey-test-with-list
+    (setq hey--records (hey-test--records-from
+                        (hey-test--posting 501 901 "Subject")))
+    (dolist (width '(40 58 70 90 110 130 160 240))
+      (hey--render-list nil width)
+      (should (= (hey-test--column-width "When") 12))
+      (should (<= (hey-test--column-width "Subject")
+                  hey-list-subject-max-width))
+      (should (<= (hey-test--configured-table-width)
+                  (- width hey--list-right-gutter))))
+    (dolist (width '(160 240))
+      (hey--render-list nil width)
+      (should (= (hey-test--column-width "Subject") 70))
+      (should (= (hey-test--column-width "Sender") 24))
+      (should (= (hey-test--configured-table-width) 131))
+      (should (< (hey-test--configured-table-width) width)))))
+
+(ert-deftest hey-ui-list-reserves-a-right-gutter-and-its-column-floors ()
+  (hey-test-with-list
+    (setq hey--records (hey-test--records-from
+                        (hey-test--posting 501 901 "Gutter row")))
+    (dolist (width '(40 58 70 90 130))
+      (hey--render-list nil width)
+      (should (= (hey-test--configured-table-width)
+                 (- width hey--list-right-gutter)))
+      (should (= (length (hey-test--rendered-row-line))
+                 (- width hey--list-right-gutter))))
+    ;; Minimal layout floors: padding, one Subject column, one gap, and the
+    ;; fixed When column.  Below that the gutter yields to the floors.
+    (dolist (width '(18 16 14))
+      (hey--render-list nil width)
+      (should (= (hey-test--configured-table-width) 16))
+      (should (= (hey-test--column-width "Subject") 1))
+      (should (= (hey-test--column-width "When") 12)))))
+
+(ert-deftest hey-ui-long-memberships-stay-inside-their-column ()
+  (hey-test-with-list
+    (let ((raw (copy-tree (hey-test--posting 501 901 "Memberships"))))
+      (setf (alist-get "folders" raw nil nil #'equal)
+            '((("id" . 11) ("name" . "Receipts"))
+              (("id" . 12) ("name" . "Travel"))
+              (("id" . 13) ("name" . "Invoices")))
+            (alist-get "collections" raw nil nil #'equal)
+            '((("id" . 21) ("name" . "Launch Pad"))))
+      (setq hey--records (hey-test--records-from raw))
+      (dolist (width '(90 130))
+        (hey--render-list nil width)
+        (let* ((line (hey-test--rendered-row-line))
+               (cell (aref (cadar (hey--tabulated-entries)) 2)))
+          (should (= (length line) (- width hey--list-right-gutter)))
+          (should (= (string-width cell)
+                     (hey-test--column-width "Labels / collections")))
+          (should (string-match-p "Invoices"
+                                  (get-text-property 0 'help-echo cell)))
+          (should (string-match-p "Launch Pad"
+                                  (get-text-property 0 'help-echo cell))))))))
+
+(ert-deftest hey-ui-capped-list-places-when-after-sender-not-the-window ()
+  (hey-test-with-list
+    (let ((raw (copy-tree (hey-test--posting 501 901 "Settlement reminder"))))
+      (setf (alist-get "folders" raw nil nil #'equal) nil
+            (alist-get "collections" raw nil nil #'equal) nil)
+      (setq hey--records (hey-test--records-from raw))
+      (hey--render-list nil 160)
+      (let* ((line (hey-test--rendered-row-line))
+             (entry (tabulated-list-get-entry))
+             (date-index
+              (cl-position "When" tabulated-list-format
+                           :key #'car :test #'equal))
+             (timestamp
+              (substring-no-properties (aref entry date-index))))
+        (should (= (length line) (hey-test--configured-table-width)))
+        (should (< (length line) 160))
+        (should (equal (substring line (hey-test--column-start "When"))
+                       (format "%12s" timestamp)))
+        (should (equal (substring line
+                                  (hey-test--column-start "Sender")
+                                  (hey-test--column-start "When"))
+                       (format "%-25s" "Synthetic Sender")))))))
 
 (ert-deftest hey-ui-wide-layout-caps-subject-width-with-full-help ()
   (hey-test-with-list
@@ -306,7 +414,8 @@
              (subject-cell (aref row subject-index)))
         (should (= (string-width subject-cell) 70))
         (should (plist-get (nthcdr 3 date-format) :right-align))
-        (should (= (hey-test--configured-table-width) 130))
+        (should (= (cadr date-format) 12))
+        (should (= (hey-test--configured-table-width) 110))
         (should-not (cl-find "Summary" tabulated-list-format
                              :key #'car :test #'equal))
         (should (equal (get-text-property 0 'help-echo subject-cell)
@@ -325,7 +434,9 @@
       (hey--render-list nil 200)
       (should (= (hey-test--column-width "Subject") 48))
       (should (= (hey-test--column-width "Sender") 20))
-      (should (= (hey-test--configured-table-width) 200)))))
+      (should (= (hey-test--column-width "When") 12))
+      (should (= (hey-test--configured-table-width) 105))
+      (should (< (hey-test--configured-table-width) 200)))))
 
 (ert-deftest hey-ui-wide-layout-caps-sender-width-with-full-help ()
   (hey-test-with-list

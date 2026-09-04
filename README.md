@@ -91,8 +91,11 @@ Lists follow a Subject, Sender, Labels / collections, and When scan order.
 Subject receives flexible width up to 70 columns by default; customize
 `hey-list-subject-max-width` to change the cap.  Sender grows up to 24 columns;
 customize `hey-list-sender-max-width` to change its cap.  Truncated subjects and
-senders retain their full text in help.  The subdued, right-aligned When column
-shows today's time, a compact date for older mail, and stays at the far edge.
+senders retain their full text in help.  The subdued When column right-aligns
+today's time or a compact date inside its fixed 12 columns and sits directly
+after the last content column; surplus window width stays empty to the right of
+the table, which stops two columns short of the window edge while the column
+floors allow it.
 Bundle rows without one readable topic leave When blank: the CLI supplies one
 timestamp for the aggregate, not an authoritative time for every subject joined
 in that row.  `RET` uses the bundle contact's read-only thread list when

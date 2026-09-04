@@ -580,24 +580,26 @@ gaining Vertico/Orderless behavior automatically. Fetch alternate-source
 inventories only when their commands are invoked. Mail search similarly starts
 from the list buffer and uses the minibuffer without persistent history.
 
-Example status header and wide layout:
+Example status header and wide layout.  Subject and Sender reach their caps
+here, so the table stops at 131 columns and a wider window adds no width:
 
 ```text
 HEY · Personal · Imbox · 37 shown · updated 11:42
-  Subject                              Sender             Labels                When
-  ● Design review moved                Alice Example      Work, Planning        10:31
-  Receipt for HEY                      Basecamp           Receipts              Sep 3
+  Subject                                                                Sender                   Labels / collections         When
+  ● Design review moved                                                  Alice Example            Work, Planning              10:31
+  Receipt for HEY                                                        Basecamp                 Receipts                    Sep 3
 
 [Load more]
 ```
 
-Example narrow layout:
+Example narrow layout at a 70-column window.  Subject absorbs the spare width
+and the table stops two columns short of the window edge:
 
 ```text
 HEY · Personal · Imbox · 37 shown
-  Subject                              Sender                 When
-  ● Design review moved                Alice Example          10:31
-  Receipt for HEY                      Basecamp                Sep 3
+  Subject                                Sender                 When
+  ● Design review moved                  Alice Example         10:31
+  Receipt for HEY                        Basecamp              Sep 3
 
 [Load more]
 ```
@@ -627,15 +629,19 @@ Rules:
 - render posting `folders` as compact labels in a subdued face, with collection
   membership visually distinct rather than presented as another label;
 - reserve trailing space for labels, compact overflow as `Receipts, Travel +2`,
-  and expose the complete memberships through row details or `help-echo`;
+  expose the complete memberships through row details or `help-echo`, and clip
+  the cell to its column width so a long membership cannot push the timestamp
+  column toward the window edge;
 - order list columns as subject, sender, memberships, and timestamp, following
   the subject-first scan path approved during dogfood; summaries stay out of
   list rows, narrow layouts omit memberships, and minimal layouts retain only
   subject and timestamp;
-- keep the timestamp at the far right in `hey-date-face`, which inherits
-  `shadow`; right-align it and give its column any width left after the Subject
-  cap so it stays anchored at the window edge; retain the sanitized source
-  timestamp in help text when the displayed value is reformatted;
+- keep the timestamp last in `hey-date-face`, which inherits `shadow`; give it
+  its preferred 12 columns, right-align the value inside that fixed width, and
+  place the column immediately after the preceding visible column so surplus
+  window width stays empty to the right of the table; keep two empty columns
+  between the table and the window edge; retain the sanitized source timestamp
+  in help text when the displayed value is reformatted;
 - give the subject first claim on flexible width up to the customizable
   `hey-list-subject-max-width`, which defaults to 70 columns like Elfeed's title
   cap, and visually truncate it with its complete value in help text; when all
@@ -649,8 +655,13 @@ Rules:
 - never fetch per-thread metadata merely to enrich a row; search rows leave
   unavailable label and collection data empty rather than guessing or issuing
   N+1 requests;
-- fixed-width breakpoints continue to select which columns appear, while the
-  selected layout budgets all available width without horizontal takeover;
+- fixed-width breakpoints continue to select which columns appear; the selected
+  layout spends leftover width on Subject and Sender up to their caps, stops two
+  columns short of the window edge, and leaves any remainder empty after the
+  When column; column floors win when a window is too narrow to spare the
+  gutter, so the table stops shrinking at its irreducible width — 16 columns in
+  the minimal layout with the current padding and column widths — and windows
+  narrower than that overflow it;
 - choose the minimum width among visible windows showing the buffer and never
   issue a network request for resize;
 - use `tabulated-list-use-header-line` nil so `tabulated-list` inserts its
@@ -1191,10 +1202,16 @@ design and safety review rather than another item in this delivery plan.
 - posting labels and collections render distinctly, compact predictably, expose
   complete memberships, and cause no per-row enrichment requests;
 - every responsive layout preserves the subject-first scan order, right-aligns
-  the subdued timestamp at the far edge, and keeps the configured table within
-  the window; the subject receives flexible width up to its configured maximum
-  and the sender grows to its smaller configured maximum; both retain their
-  complete values in help text when truncated;
+  the subdued timestamp inside its fixed-width final column, keeps the
+  configured table within the window, and stops two columns short of the window
+  edge while the column floors allow it; the subject receives flexible width up
+  to its configured maximum and the sender grows to its smaller configured
+  maximum; both retain their complete values in help text when truncated, the
+  memberships cell never exceeds its column width, and the caps leave surplus
+  width empty to the right of the table instead of stretching the timestamp
+  column to the window edge;
+  the minimal layout stops at its 16-column irreducible width, and narrower
+  windows overflow it rather than losing a column floor;
   the memberships column disappears only while every loaded row lacks
   memberships, and pagination can restore it without a transport request
   beyond the requested page load;

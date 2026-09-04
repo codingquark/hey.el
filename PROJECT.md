@@ -29,8 +29,10 @@
 ## Approved UI choices
 
 - Order list columns as Subject, Sender, Labels / collections, and When; omit
-  summaries from list rows and keep When at the far right.
-- Show compact labels and collections with the complete values in help text.
+  summaries from list rows, and keep When last at its fixed preferred width
+  rather than stretching it to the window edge.
+- Show compact labels and collections with the complete values in help text,
+  and clip the memberships cell to its column width.
 - Mark unseen rows with a leading dot and bold subject. A posting from a source
   that reports read state is seen iff the CLI's `seen` field is literal JSON
   `true`; every other value is unseen. Search results have no authoritative
@@ -45,13 +47,21 @@
   the current year, or `Mon D, YYYY` otherwise.  Leave bundle timestamps blank
   when the row has no single readable topic, because one aggregate time does
   not describe every joined subject.
-  Right-align timestamps in `hey-date-face`, which inherits `shadow`, and leave
-  thread-entry timestamps unchanged.
+  Right-align timestamps inside the fixed-width When column in
+  `hey-date-face`, which inherits `shadow`, and leave thread-entry timestamps
+  unchanged.
 - Give Subject first claim on flexible width up to a customizable 70-column
   maximum, truncate it with complete help text, and omit an all-empty
   memberships column until a loaded row contains a label or collection.
 - Let Sender grow from its responsive baseline to a customizable 24-column
   maximum and retain the complete name in help text when truncated.
+- Keep the When column 12 columns wide, place it immediately after the last
+  visible content column, and leave surplus window width empty to the right of
+  the table.
+- Reserve a two-column right gutter so an ordinary layout stops two columns
+  short of the window edge.  Column floors win when a window is too narrow to
+  spare it: the minimal layout stops at its irreducible 16-column width, and
+  narrower windows overflow it rather than losing a column floor.
 - Do not add date grouping or new package-branded colors.
 - Open with `RET` in the same window and `o` in another window.
 - Use explicit `M` for load more; resize never fetches data.
@@ -129,9 +139,10 @@ Move an item to active work when starting it; remove it when complete.
   2026-09-03 and authorized proceeding to an already-seen-mail validation.
 - The user approved theme-owned current-row highlighting and humanized dates.
   On 2026-09-04, further dogfood replaced the Subject/Summary split with a
-  subject-first scan order and a compact, subdued timestamp anchored at the
-  right edge.  Date grouping and new branded colors remain intentionally
-  excluded.
+  subject-first scan order and a compact, subdued timestamp.  The same session
+  then removed the window-edge anchor: When keeps its preferred width after the
+  last content column, and surplus width stays empty.  Date grouping and new
+  branded colors remain intentionally excluded.
 - Dogfood exposed bundle rows whose joined subjects outlived the aggregate
   posting timestamp and whose unseen-only expansion returned no rows.  Bundle
   rows without one readable topic now omit the misleading When value and use
@@ -178,6 +189,13 @@ Move an item to active work when starting it; remove it when complete.
   contact ID, bundle fallback choice, aggregate timestamp omission, and fake
   transport boundary. The package artifact has SHA-256
   `69339e205aa4fce59cc072b5356d3ba2356f3f5e80e61df0037edd03ce3c1cd0`.
+- When-column alignment packet: `make check` passed under the local Emacs 31.1
+  build (109/109 ERT, strict compile, lint, read-only audit, package, install).
+  Coverage pins the fixed 12-column When width across breakpoints, the
+  two-column right gutter in configured widths and in rendered rows, the
+  16-column irreducible minimal table, memberships cells clipped to their
+  column, and capped tables that stay narrower than the window instead of
+  stretching the timestamp column to the edge.
 - Independent security review found no mailbox mutation route or process,
   path-disclosure, fake-boundary, or audit-bypass defect.
 - Automated and agent-driven work ran no authenticated HEY command, mailbox

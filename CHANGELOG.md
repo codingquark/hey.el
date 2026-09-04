@@ -11,8 +11,16 @@ All notable changes to this project will be documented in this file.
   returns.
 - Order list columns as Subject, Sender, Labels / collections, and When.  Give
   Subject and Sender flexible width up to customizable 70- and 24-column
-  maximums, anchor compact subdued timestamps at the right edge, and remove
-  Summary from list rows.
+  maximums, keep compact subdued timestamps inside a fixed 12-column When
+  column, and remove Summary from list rows.
+- Stop stretching the When column across leftover window width.  It keeps its
+  preferred width after the last content column and leaves a two-column gutter
+  before the window edge, so surplus width stays empty instead of separating
+  Sender from its timestamp.  Below the 16-column irreducible minimal table the
+  gutter yields to the column floors.
+- Clip list memberships cells to their column width so a long label or
+  collection stops pushing the timestamp toward the window edge; complete
+  memberships remain in help text.
 - Show `[Load more]` below lists with another page.  `RET` or mouse-2 activates
   the control; `M` remains available.  The control hides during requests and
   after exhaustion, and activation keeps point on the last loaded row.

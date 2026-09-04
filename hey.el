@@ -163,6 +163,13 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
                 (date "When" 12))))
   "Column fields, titles, and preferred widths for each list layout.")
 
+(defconst hey--list-right-gutter 2
+  "Empty window columns kept to the right of the list table.
+
+The gutter keeps the When column off the window edge.  Column floors win
+when a window is too narrow to spare it, so the table never shrinks below
+its irreducible width to preserve the gutter.")
+
 (defun hey--call (operation &rest arguments)
   "Call named CLI OPERATION with ARGUMENTS.
 
@@ -260,7 +267,11 @@ posting, and at the narrow breakpoint where Subject takes priority."
 (defun hey--column-format (layout columns width)
   "Return a tabulated-list format for LAYOUT's COLUMNS at WIDTH.
 
-Give Subject and Sender available space up to their configured limits."
+Subject and Sender take available space up to their configured limits.
+When keeps its preferred width, so surplus width stays empty to the
+right of the table instead of widening the timestamp column.  Flexible
+width stops `hey--list-right-gutter' columns short of the window edge
+while the column floors still fit."
   (let* ((layout-columns (alist-get layout hey--list-layouts))
          (subject-base (nth 2 (assq 'subject layout-columns)))
          (sender-column (assq 'sender columns))
@@ -278,17 +289,14 @@ Give Subject and Sender available space up to their configured limits."
                    sum preferred))
          (inter-column-padding (max 0 (1- (length columns))))
          (available (- width tabulated-list-padding inter-column-padding
-                       fixed-width))
+                       fixed-width hey--list-right-gutter))
          (subject-width
           (min subject-limit
                (max subject-floor (- available (or sender-floor 0)))))
          (sender-width
           (and sender-column
                (min sender-limit
-                    (max sender-floor (- available subject-width)))))
-         (used-width (+ tabulated-list-padding inter-column-padding
-                        fixed-width subject-width (or sender-width 0)))
-         (date-extra (max 0 (- width used-width))))
+                    (max sender-floor (- available subject-width))))))
     (vconcat
      (mapcar (lambda (column)
                (pcase-let ((`(,field ,title ,preferred) column))
@@ -296,7 +304,6 @@ Give Subject and Sender available space up to their configured limits."
                   (list title (pcase field
                                 ('subject subject-width)
                                 ('sender sender-width)
-                                ('date (+ preferred date-extra))
                                 (_ preferred))
                         nil)
                   (and (eq field 'date) '(:right-align t)))))
@@ -306,14 +313,15 @@ Give Subject and Sender available space up to their configured limits."
   "Fit string VALUE to WIDTH for list column TITLE.
 
 When truncation is necessary, retain VALUE without text properties in the
-cell's help text."
+cell's help text, except when the cell already carries its own help text."
   (if (<= (string-width value) width)
       value
     (let ((display (truncate-string-to-width value width nil nil t)))
       (add-text-properties
        0 (length display)
-       `(help-echo ,(format "%s: %s" title
-                            (substring-no-properties value)))
+       `(help-echo ,(or (get-text-property 0 'help-echo value)
+                        (format "%s: %s" title
+                                (substring-no-properties value))))
        display)
       display)))
 
@@ -354,7 +362,7 @@ cell's help text."
                      (visible-index
                       (cl-position field hey--columns :key #'car))
                      (format (aref tabulated-list-format visible-index)))
-                (if (memq field '(subject sender date))
+                (if (memq field '(subject sender date memberships))
                     (hey--fit-list-cell value (car format) (cadr format))
                   value))))))
 
