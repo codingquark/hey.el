@@ -53,6 +53,55 @@
   "Face for HEY operation failures."
   :group 'hey)
 
+;; Each header element wears its own face, which retains a per-element
+;; customization hook.  `header-line' supplies fallback attributes such as the
+;; background, unless an earlier face in the inheritance list sets them.
+
+(defface hey-header-account-face
+  '((t :inherit header-line))
+  "Face for the account element in a HEY header line."
+  :group 'hey)
+
+(defface hey-header-source-face
+  '((t :inherit (mode-line-buffer-id header-line)))
+  "Face for the source element in a HEY header line."
+  :group 'hey)
+
+(defface hey-header-subject-face
+  '((t :inherit (hey-thread-subject-face header-line)))
+  "Face for the subject element in a HEY thread header line."
+  :group 'hey)
+
+(defface hey-header-count-face
+  '((t :inherit header-line))
+  "Face for the row-count element in a HEY header line."
+  :group 'hey)
+
+(defface hey-header-updated-face
+  '((t :inherit (shadow header-line)))
+  "Face for the last-refresh element in a HEY header line."
+  :group 'hey)
+
+(defface hey-header-separator-face
+  '((t :inherit (shadow header-line)))
+  "Face for the separator between HEY header-line elements."
+  :group 'hey)
+
+(defface hey-header-status-face
+  '((t :inherit (hey-status-face header-line)))
+  "Face for ordinary HEY state text in a header line."
+  :group 'hey)
+
+(defface hey-header-warning-face
+  '((t :inherit (hey-warning-face header-line)))
+  "Face for partial-result HEY state text in a header line."
+  :group 'hey)
+
+(defface hey-header-error-face
+  '((t :inherit (hey-error-face header-line)))
+  "Face for failed HEY state text in a header line."
+  :group 'hey)
+
 (defcustom hey-account nil
   "Linked account ID used by `hey'.
 
@@ -454,8 +503,28 @@ When WIDTH is non-nil, use it for responsive column selection."
      (hey--records (hey--first-row))
      (t (goto-char (point-min)) (forward-line 1)))))
 
+(defconst hey--header-separator
+  (propertize " · " 'face 'hey-header-separator-face)
+  "Separator between HEY header-line elements.
+Its face is package-owned so separators recede below the elements.")
+
+(defun hey--header-element (text face)
+  "Return header TEXT wearing FACE, or nil when TEXT is absent.
+
+An empty string counts as absent so a missing part never leaves a
+separator behind."
+  (when (and (stringp text) (not (string-empty-p text)))
+    (propertize text 'face face)))
+
+(defun hey--header-join (parts)
+  "Join non-absent header PARTS with `hey--header-separator'."
+  (string-join (delq nil parts) hey--header-separator))
+
 (defun hey--status-header ()
-  "Return the sticky status header for the current list buffer."
+  "Return the sticky status header for the current list buffer.
+Led by the account title, or the source title once width drops the
+account, never by the package name.  Every element carries its own
+package-owned header face."
   (let* ((count (length hey--records))
          (base-state (cond
                       (hey--loading "loading")
@@ -463,35 +532,36 @@ When WIDTH is non-nil, use it for responsive column selection."
                       (hey--error "error")
                       ((hey--continuation-p) nil)
                       (t "up to date")))
-         (state (and (or base-state hey--warnings)
-                     (propertize
-                      (mapconcat #'identity
-                                 (delq nil (list base-state
-                                                 (and hey--warnings "partial")))
-                                 ", ")
-                      'face (cond
-                             (hey--error 'hey-error-face)
-                             (hey--warnings 'hey-warning-face)
-                             (t 'hey-status-face)))))
-         (updated (and hey--last-refreshed
-                       (format-time-string "%H:%M" hey--last-refreshed)))
+         (state (when (or base-state hey--warnings)
+                  (hey--header-element
+                   (mapconcat #'identity
+                              (delq nil (list base-state
+                                              (and hey--warnings "partial")))
+                              ", ")
+                   (cond
+                    (hey--error 'hey-header-error-face)
+                    (hey--warnings 'hey-header-warning-face)
+                    (t 'hey-header-status-face)))))
+         (updated (when hey--last-refreshed
+                    (hey--header-element
+                     (format-time-string "updated %H:%M" hey--last-refreshed)
+                     'hey-header-updated-face)))
+         (account (hey--header-element (hey--account-title)
+                                       'hey-header-account-face))
+         (source (hey--header-element (hey--source-title)
+                                      'hey-header-source-face))
+         (shown (hey--header-element (format "%d shown" count)
+                                     'hey-header-count-face))
+         (total (hey--header-element (number-to-string count)
+                                     'hey-header-count-face))
          (layout (or hey--layout
                      (hey--layout-for-width (hey--minimum-window-width)))))
-    (string-join
-     (delq nil
-           (pcase layout
-             ('wide
-              (list "HEY" (hey--account-title) (hey--source-title)
-                    (format "%d shown" count) state
-                    (and updated (concat "updated " updated))))
-             ('medium
-              (list "HEY" (hey--account-title) (hey--source-title)
-                    (format "%d shown" count) state))
-             ('narrow
-              (list "HEY" (hey--source-title) (format "%d shown" count) state))
-             (_ (list "HEY" (hey--source-title)
-                      (number-to-string count) state))))
-     " · ")))
+    (hey--header-join
+     (pcase layout
+       ('wide (list account source shown state updated))
+       ('medium (list account source shown state))
+       ('narrow (list source shown state))
+       (_ (list source total state))))))
 
 (defun hey--resize-buffer (&optional width)
   "Redraw this list for WIDTH from cached records only.
@@ -1171,25 +1241,34 @@ FACE defaults to `hey-status-face'."
     (goto-char (point-min))))
 
 (defun hey--thread-header ()
-  "Return a compact sticky orientation header for this thread."
-  (if (hey-thread-p hey--thread)
-      (let* ((width (hey--minimum-window-width))
-             (count (format "%d shown"
-                            (length (hey-thread-entries hey--thread))))
-             (parts
-              (cond
-               ((>= width 100)
-                (list "HEY" (hey-thread-account-name hey--thread)
-                      (hey-thread-source-title hey--thread)
-                      (hey-thread-subject hey--thread) count))
-               ((>= width 65)
-                (list "HEY" (hey-thread-account-name hey--thread)
-                      (hey-thread-source-title hey--thread) count))
-               (t (list "HEY" (hey-thread-source-title hey--thread) count)))))
-        (string-join parts " · "))
-    (if hey--loading
-        (concat "HEY · " (propertize "loading" 'face 'hey-status-face))
-      (concat "HEY · " (propertize "error" 'face 'hey-error-face)))))
+  "Return a compact sticky orientation header for this thread.
+Like `hey--status-header', this header opens with the account title, or
+with the source title once width drops the account, and never with the
+package name.  Every element carries its own package-owned header
+face."
+  (if (not (hey-thread-p hey--thread))
+      (if hey--loading
+          (hey--header-element "loading" 'hey-header-status-face)
+        (hey--header-element "error" 'hey-header-error-face))
+    (let* ((width (hey--minimum-window-width))
+           (account (hey--header-element
+                     (hey-thread-account-name hey--thread)
+                     'hey-header-account-face))
+           (source (hey--header-element
+                    (hey-thread-source-title hey--thread)
+                    'hey-header-source-face))
+           (subject (hey--header-element
+                     (hey-thread-subject hey--thread)
+                     'hey-header-subject-face))
+           (count (hey--header-element
+                   (format "%d shown"
+                           (length (hey-thread-entries hey--thread)))
+                   'hey-header-count-face)))
+      (hey--header-join
+       (cond
+        ((>= width 100) (list account source subject count))
+        ((>= width 65) (list account source count))
+        (t (list source count)))))))
 
 (defun hey--render-thread ()
   "Render the normalized buffer-local HEY thread."

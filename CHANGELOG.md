@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Face each header-line element separately: `hey-header-account-face`,
+  `hey-header-source-face`, `hey-header-subject-face`,
+  `hey-header-count-face`, `hey-header-updated-face`,
+  `hey-header-separator-face`, `hey-header-status-face`,
+  `hey-header-warning-face`, and `hey-header-error-face`.  Each inherits
+  `header-line` beside its meaning-bearing face; `header-line` supplies the
+  theme's header background and other attributes as a fallback, which a
+  meaning-bearing face overrides when it sets them.  Header state text keeps
+  failure over partial-result warning over ordinary state; buffer bodies keep
+  the unlayered state faces.
+- Drop the `HEY` element from every header line, list and thread alike.  Both
+  now open with the account title, or with the source title once a narrower
+  layout drops the account; buffer names and mode names already carry the
+  package name.
 - Leave When blank for bundle rows without one readable topic because their
   single posting timestamp does not describe every joined subject.  Open them
   through the contact's read-only thread list when the posting supplies a

@@ -112,16 +112,29 @@
       (should (local-variable-p 'hl-line-mode))
       (should-not hl-line-mode))))
 
+(defconst hey-test--header-faces
+  '(hey-header-account-face
+    hey-header-source-face
+    hey-header-subject-face
+    hey-header-count-face
+    hey-header-updated-face
+    hey-header-separator-face
+    hey-header-status-face
+    hey-header-warning-face
+    hey-header-error-face)
+  "Package-owned faces for the elements of a HEY header line.")
+
 (ert-deftest hey-ui-defines-theme-native-semantic-faces ()
-  (dolist (face '(hey-unseen-face
-                  hey-date-face
-                  hey-label-face
-                  hey-collection-face
-                  hey-thread-subject-face
-                  hey-metadata-label-face
-                  hey-status-face
-                  hey-warning-face
-                  hey-error-face))
+  (dolist (face (append '(hey-unseen-face
+                          hey-date-face
+                          hey-label-face
+                          hey-collection-face
+                          hey-thread-subject-face
+                          hey-metadata-label-face
+                          hey-status-face
+                          hey-warning-face
+                          hey-error-face)
+                        hey-test--header-faces))
     (should (facep face))
     (should (eq (face-attribute face :foreground nil nil) 'unspecified))
     (should (eq (face-attribute face :background nil nil) 'unspecified)))
@@ -131,6 +144,29 @@
               'font-lock-constant-face))
   (should (eq (face-attribute 'hey-warning-face :inherit) 'warning))
   (should (eq (face-attribute 'hey-error-face :inherit) 'error)))
+
+(ert-deftest hey-ui-header-faces-layer-onto-header-line ()
+  "Inherit `header-line' so element faces keep the theme's header."
+  (dolist (face hey-test--header-faces)
+    (should (facep face))
+    (should (memq 'header-line
+                  (ensure-list (face-attribute face :inherit))))
+    (should (eq (face-attribute face :foreground nil nil) 'unspecified))
+    (should (eq (face-attribute face :background nil nil) 'unspecified)))
+  (pcase-dolist (`(,face . ,inherits)
+                  '((hey-header-account-face header-line)
+                    (hey-header-source-face mode-line-buffer-id header-line)
+                    (hey-header-subject-face hey-thread-subject-face header-line)
+                    (hey-header-count-face header-line)
+                    (hey-header-updated-face shadow header-line)
+                    (hey-header-separator-face shadow header-line)
+                    (hey-header-status-face hey-status-face header-line)
+                    (hey-header-warning-face hey-warning-face header-line)
+                    (hey-header-error-face hey-error-face header-line)))
+    (should (equal (ensure-list (face-attribute face :inherit))
+                   inherits)))
+  ;; The brand element is gone, so no header face remains to wear it.
+  (should-not (facep 'hey-header-brand-face)))
 
 (ert-deftest hey-ui-thread-states-use-semantic-faces ()
   (with-temp-buffer
@@ -171,8 +207,9 @@
     (let* ((header (hey--status-header))
            (stale-start (string-match "stale" header)))
       (should stale-start)
+      ;; The header wears the header-layered face, not the body face.
       (should (eq (get-text-property stale-start 'face header)
-                  'hey-error-face)))))
+                  'hey-header-error-face)))))
 
 (ert-deftest hey-ui-malformed-empty-response-is-not-presented-as-empty-mail ()
   (hey-test-with-list
@@ -240,6 +277,177 @@
   (plist-get (hey-model-normalize-postings
               (hey-test--postings-envelope postings) hey--source)
              :value))
+
+(ert-deftest hey-ui-status-header-leads-with-account-or-source ()
+  "Open every list layout with account or source, never the package name."
+  (hey-test-with-list
+    (setq hey--records (hey-test--records-from
+                        (hey-test--posting 501 901 "Header row"))
+          hey--last-refreshed nil)
+    (dolist (case '((130 . "Personal · Imbox · 1 shown · up to date")
+                    (90 . "Personal · Imbox · 1 shown · up to date")
+                    (70 . "Imbox · 1 shown · up to date")
+                    (40 . "Imbox · 1 · up to date")))
+      (hey--render-list nil (car case))
+      (should (equal (hey--status-header) (cdr case)))
+      ;; An absent status word or refresh time leaves no dangling separator.
+      (dolist (state (list (list nil nil)
+                           (list t nil)
+                           (list nil '("malformed row"))))
+        (let ((hey--loading (car state))
+              (hey--warnings (cadr state)))
+          (let ((header (hey--status-header)))
+            (should-not (string-prefix-p "HEY" header))
+            (should-not (string-prefix-p " · " header))
+            (should-not (string-suffix-p " · " header))
+            (should-not (string-match-p " ·  · " header))))))))
+
+(defun hey-test--header-face (header text)
+  "Return the face of the first TEXT occurrence in HEADER."
+  (should (string-match (regexp-quote text) header))
+  (get-text-property (match-beginning 0) 'face header))
+
+(ert-deftest hey-ui-status-header-faces-each-element ()
+  "Wear a distinct package-owned face on every list-header element."
+  (hey-test-with-list
+    (setq hey--records (hey-test--records-from
+                        (hey-test--posting 501 901 "Header row"))
+          hey--last-refreshed (encode-time 0 0 11 3 9 2026))
+    (hey--render-list nil 130)
+    (let ((header (hey--status-header)))
+      (dolist (case '(("Personal" . hey-header-account-face)
+                      ("Imbox" . hey-header-source-face)
+                      ("1 shown" . hey-header-count-face)
+                      ("up to date" . hey-header-status-face)
+                      (" · " . hey-header-separator-face)))
+        (should (eq (hey-test--header-face header (car case)) (cdr case))))
+      (should (string-match "updated [0-9][0-9]:[0-9][0-9]" header))
+      (should (eq (get-text-property (match-beginning 0) 'face header)
+                  'hey-header-updated-face)))))
+
+(ert-deftest hey-ui-status-header-state-face-preserves-severity-precedence ()
+  "Let a failure outrank a partial-result warning in the header state."
+  (hey-test-with-list
+    (setq hey--records (hey-test--records-from
+                        (hey-test--posting 501 901 "Header row")))
+    (hey--render-list nil 130)
+    (let ((failure (make-hey-error :category 'network :message "Offline")))
+      (dolist (case (list (list nil nil nil "up to date"
+                                'hey-header-status-face)
+                          (list nil nil '("malformed row")
+                                "up to date, partial"
+                                'hey-header-warning-face)
+                          (list failure t nil "stale"
+                                'hey-header-error-face)
+                          (list failure nil '("malformed row")
+                                "error, partial"
+                                'hey-header-error-face)))
+        (pcase-let ((`(,error ,stale ,warnings ,text ,face) case))
+          (let ((hey--error error)
+                (hey--stale stale)
+                (hey--warnings warnings)
+                (hey--loading nil))
+            (let ((header (hey--status-header)))
+              (should (eq (hey-test--header-face header text) face))
+              (when (string-match-p ", " text)
+                ;; One state element carries one face across its parts.
+                (should (eq (hey-test--header-face header
+                                              (car (split-string text ", ")))
+                            face))))))))
+    ;; An unconsumed next page contributes no status word of its own.
+    (let ((hey--warnings '("malformed row"))
+          (hey--source (hey-test--source)))
+      (setf (hey-source-continuation hey--source) "synthetic-cursor")
+      (let ((header (hey--status-header)))
+        (should-not (string-match-p "up to date" header))
+        (should (eq (hey-test--header-face header "partial")
+                    'hey-header-warning-face))))))
+
+(defun hey-test--thread-header (width &optional subject)
+  "Return the thread header for SUBJECT at window WIDTH.
+Default SUBJECT to the synthetic subject; an empty string omits it."
+  (with-temp-buffer
+    (hey-thread-mode)
+    (setq hey--thread
+          (plist-get
+           (hey-model-normalize-thread
+            (hey-test--thread-envelope)
+            (list :account-id "101" :account-name "Personal"
+                  :topic-id "901" :subject (or subject "Design review moved")
+                  :source-title "Imbox"))
+           :value))
+    (cl-letf (((symbol-function 'hey--minimum-window-width)
+               (lambda () width)))
+      (hey--thread-header))))
+
+(defun hey-test--assert-no-package-name (header)
+  "Fail unless HEADER names its content rather than the package."
+  (let ((case-fold-search nil))
+    (should-not (string-match-p "HEY" header))))
+
+(ert-deftest hey-ui-thread-header-leads-with-account-or-source ()
+  "Open every thread layout with account or source, never the package name."
+  (dolist (case '((120 . "Personal · Imbox · Design review moved · 2 shown")
+                  (80 . "Personal · Imbox · 2 shown")
+                  (50 . "Imbox · 2 shown")))
+    (should (equal (substring-no-properties
+                    (hey-test--thread-header (car case)))
+                   (cdr case)))))
+
+(ert-deftest hey-ui-thread-header-faces-each-element ()
+  "Wear a distinct package-owned face on every thread-header element."
+  (let ((header (hey-test--thread-header 120)))
+    (dolist (case '(("Personal" . hey-header-account-face)
+                    ("Imbox" . hey-header-source-face)
+                    ("Design review moved" . hey-header-subject-face)
+                    ("2 shown" . hey-header-count-face)
+                    (" · " . hey-header-separator-face)))
+      (should (eq (hey-test--header-face header (car case)) (cdr case)))))
+  (with-temp-buffer
+    (hey-thread-mode)
+    (let ((hey--loading t))
+      (should (equal (substring-no-properties (hey--thread-header))
+                     "loading"))
+      (should (eq (hey-test--header-face (hey--thread-header) "loading")
+                  'hey-header-status-face)))
+    (should (equal (substring-no-properties (hey--thread-header)) "error"))
+    (should (eq (hey-test--header-face (hey--thread-header) "error")
+                'hey-header-error-face))))
+
+(ert-deftest hey-ui-thread-header-omits-an-absent-subject ()
+  "Omit an absent subject instead of leaving a separator pair."
+  (let ((header (hey-test--thread-header 120 "")))
+    (should (equal (substring-no-properties header)
+                   "Personal · Imbox · 2 shown"))
+    (should-not (string-match-p " ·  · " header))))
+
+(ert-deftest hey-ui-headers-never-name-the-package ()
+  "Name content, never the product, in every list and thread header state."
+  (hey-test-with-list
+    (setq hey--records (hey-test--records-from
+                        (hey-test--posting 501 901 "Header row"))
+          hey--last-refreshed (encode-time 0 0 11 3 9 2026))
+    (let ((failure (make-hey-error :category 'network :message "Offline")))
+      (dolist (width '(130 90 70 40))
+        (hey--render-list nil width)
+        (dolist (state (list (list nil nil nil nil)
+                             (list nil t nil nil)
+                             (list failure nil nil nil)
+                             (list failure nil nil t)
+                             (list nil nil '("malformed row") nil)))
+          (pcase-let ((`(,error ,loading ,warnings ,stale) state))
+            (let ((hey--error error)
+                  (hey--loading loading)
+                  (hey--warnings warnings)
+                  (hey--stale stale))
+              (hey-test--assert-no-package-name (hey--status-header))))))))
+  (dolist (width '(120 80 50))
+    (hey-test--assert-no-package-name (hey-test--thread-header width)))
+  (with-temp-buffer
+    (hey-thread-mode)
+    (let ((hey--loading t))
+      (hey-test--assert-no-package-name (hey--thread-header)))
+    (hey-test--assert-no-package-name (hey--thread-header))))
 
 (ert-deftest hey-ui-narrow-layout-leaves-the-right-gutter ()
   (hey-test-with-list

@@ -541,10 +541,38 @@ inherits a standard Emacs face and specifies no color directly. Model-owned
 row formatters define and apply row faces; the UI library defines faces used by
 buffer-state rendering and thread overlays.
 
+Each header-line element owns a face: account, source, subject, row count, last
+refresh, ordinary state, warning state, failure state, and the separator between
+elements. Every one of them inherits `header-line` beside its
+meaning-bearing face. `header-line` supplies the theme's header background and
+other attributes as a fallback while a user restyles a single element; an
+earlier face in the inheritance list wins, so a meaning-bearing face that sets a
+background or attribute replaces the header's value there:
+
+- `hey-header-updated-face`, together with `hey-header-separator-face`,
+  inherits `shadow` and `header-line`;
+- `hey-header-account-face` and `hey-header-count-face` inherit `header-line`;
+- `hey-header-source-face` inherits `mode-line-buffer-id` and `header-line`,
+  the theme's emphasis for the location a buffer shows;
+- `hey-header-subject-face` inherits `hey-thread-subject-face` and
+  `header-line`;
+- `hey-header-status-face`, `hey-header-warning-face`, and
+  `hey-header-error-face` inherit `hey-status-face`, `hey-warning-face`,
+  or `hey-error-face` with `header-line`, and the header selects among them by
+  severity: a failure outranks a partial-result warning, which outranks
+  ordinary state.
+
+Buffer body and footer text keeps the unlayered `hey-status-face`,
+`hey-warning-face`, and `hey-error-face`.
+
 The public face names are `hey-unseen-face`, `hey-date-face`, `hey-label-face`,
 `hey-collection-face`, `hey-thread-subject-face`,
-`hey-metadata-label-face`, `hey-status-face`, `hey-warning-face`, and
-`hey-error-face`.
+`hey-metadata-label-face`, `hey-status-face`, `hey-warning-face`,
+`hey-error-face`, `hey-header-account-face`,
+`hey-header-source-face`, `hey-header-subject-face`, `hey-header-count-face`,
+`hey-header-updated-face`, `hey-header-separator-face`,
+`hey-header-status-face`, `hey-header-warning-face`, and
+`hey-header-error-face`.
 
 Meaning never depends on color alone: unseen mail retains its marker and
 weight, collections retain the `◇` marker, and warnings and failures retain
@@ -584,7 +612,7 @@ Example status header and wide layout.  Subject and Sender reach their caps
 here, so the table stops at 131 columns and a wider window adds no width:
 
 ```text
-HEY · Personal · Imbox · 37 shown · updated 11:42
+Personal · Imbox · 37 shown · updated 11:42
   Subject                                                                Sender                   Labels / collections         When
   ● Design review moved                                                  Alice Example            Work, Planning              10:31
   Receipt for HEY                                                        Basecamp                 Receipts                    Sep 3
@@ -596,7 +624,7 @@ Example narrow layout at a 70-column window.  Subject absorbs the spare width
 and the table stops two columns short of the window edge:
 
 ```text
-HEY · Personal · Imbox · 37 shown
+Imbox · 37 shown
   Subject                                Sender                 When
   ● Design review moved                  Alice Example         10:31
   Receipt for HEY                        Basecamp              Sep 3
@@ -670,7 +698,12 @@ Rules:
 - reserve the real, sticky `header-line-format` for account, source, row count,
   loading/stale/error state, and last successful refresh; adapt or abbreviate it
   by width and never include private search text; a source with an unconsumed
-  next page contributes no status word;
+  next page contributes no status word; give every element its own header face,
+  and omit an element rather than rendering an empty slot or a lone separator;
+- lead every header line, list or thread, with the account title, or with the
+  source title once a narrower layout drops the account, and never with the
+  package name; buffer names and mode names already identify the package;
+  omit an absent part rather than leaving a separator around it;
 - offer continuation as an in-buffer `[Load more]` text button below the table
   and its footer notices, built with the standard `button` APIs and bound to the
   same load-more funnel as `M`; show it only for loaded rows with an unconsumed
@@ -759,8 +792,9 @@ Rules:
 - escape server-provided metadata before inserting it into the package-owned
   Markdown scaffold so subjects or sender names cannot forge its structure;
 - use a compact sticky header such as
-  `HEY · Personal · Imbox · Design review moved · 4 shown`, abbreviating or
-  omitting lower-priority parts at narrow widths;
+  `Personal · Imbox · Design review moved · 4 shown`, abbreviating or
+  omitting lower-priority parts at narrow widths; face each element as in the
+  list header, and reuse the header state faces while loading or failing;
 - do not render an `Open in HEY` URL or a one-off key hint in the preamble.
   `b` opens the stored validated application URL, `y` copies it, and `?` plus
   normal mode help provide consistent command discovery; unavailable URLs fail
@@ -1223,13 +1257,17 @@ design and safety review rather than another item in this delivery plan.
 - sticky header state reflects account, source, loading/staleness, count, and
   successful refresh without exposing private search text, and the in-buffer
   `[Load more]` control tracks unconsumed continuations, hides itself while a
-  request is in flight, and anchors appends on the last loaded row;
+  request is in flight, and anchors appends on the last loaded row; every
+  header element, separator included, wears its own package face, and the
+  state face keeps failure over partial-result warning over ordinary state;
 - initial point and `n`/`p` skip the in-buffer table heading and status lines;
 - refresh preserves identity and visible-window behavior;
 - resize changes columns without invoking transport;
 - private query/subject data is excluded from buffer names and logs;
 - empty/loading/error/partial state rendering;
-- thread preamble and sticky-header rendering at narrow and wide widths;
+- thread preamble and sticky-header rendering at narrow and wide widths, with
+  the sticky thread header facing account, source, subject, and count, and with
+  no header variant naming the package;
 - thread headings, links, body-state notices, and outline behavior;
 - `b` and `y` use only a validated stored HEY URL, remain discoverable through
   mode help, and do not require rendering that URL in the thread body.

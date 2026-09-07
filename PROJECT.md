@@ -62,6 +62,18 @@
   short of the window edge.  Column floors win when a window is too narrow to
   spare it: the minimal layout stops at its irreducible 16-column width, and
   narrower windows overflow it rather than losing a column floor.
+- Lead every header line, list or thread, with the account title, or with the
+  source title once a narrower layout drops the account, and never with the
+  package name; buffer names and mode names already identify the package.
+  Omit an absent part rather than leaving a separator around it.
+- Give every header-line element its own package-owned face — account,
+  source, subject, row count, last refresh, state, and separator — each
+  inheriting `header-line` beside its meaning-bearing face, where
+  `header-line` supplies the theme's header background and other attributes as
+  a fallback that a meaning-bearing face overrides when it sets them.  Omit an
+  absent element rather than rendering an empty slot, keep header state
+  selection at failure over warning over ordinary state, and leave buffer-body
+  state text on the unlayered faces.
 - Do not add date grouping or new package-branded colors.
 - Open with `RET` in the same window and `o` in another window.
 - Use explicit `M` for load more; resize never fetches data.
@@ -196,6 +208,25 @@ Move an item to active work when starting it; remove it when complete.
   16-column irreducible minimal table, memberships cells clipped to their
   column, and capped tables that stay narrower than the window instead of
   stretching the timestamp column to the edge.
+- Status-header content packet: `make check` passed under the local Emacs 31.1
+  build (110/110 ERT, strict compile, lint, read-only audit, package, install).
+  Coverage pins the exact header text at every breakpoint, the absence of a
+  leading brand element, and separator hygiene while loading or reporting
+  skipped rows.
+- Header-line element faces packet: `make check` passed under the local Emacs
+  31.1 build (115/115 ERT, strict compile, lint, read-only audit, package,
+  install).  Coverage pins the element-to-face mapping in the list and thread
+  headers, `header-line` inheritance with no package color in any header face,
+  failure-over-warning-over-ordinary state selection, and omission of an absent
+  element.  The packet artifact has SHA-256
+  `37684681c9d16639f274c518f14c19e04f88f42a9225a8446c47df18c827a38f`.
+- Brand-free header packet: `make check` passed under the local Emacs 31.1
+  build (117/117 ERT, strict compile, lint, read-only audit, package, install).
+  Coverage pins the exact thread-header text at every breakpoint, the absence of
+  the package name from every list and thread header state, and the retired
+  `hey-header-brand-face`, which no element face replaces.  The package artifact
+  has SHA-256
+  `48494aae4afe41b1c92b6307bda9249a78f3268d9ddf112ed46c526336f40265`.
 - Independent security review found no mailbox mutation route or process,
   path-disclosure, fake-boundary, or audit-bypass defect.
 - Automated and agent-driven work ran no authenticated HEY command, mailbox

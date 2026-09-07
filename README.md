@@ -87,6 +87,17 @@ including the current-row highlight.  Theme authors can customize
 `hey-error-face` without replacing the list, header-line, or Markdown faces
 owned by their respective modes.
 
+Header lines add `hey-header-account-face`, `hey-header-source-face`,
+`hey-header-subject-face`, `hey-header-count-face`,
+`hey-header-updated-face`, `hey-header-separator-face`,
+`hey-header-status-face`, `hey-header-warning-face`, and
+`hey-header-error-face` for account, source, subject, row count, last
+refresh, separator, and state text.  Each inherits `header-line`, which supplies
+the theme's header background and other attributes as a fallback; a
+meaning-bearing face ahead of it, or a custom face setting, still wins.  No
+header line prints the package name; buffer names such as
+`*HEY: 101 / Imbox*` and the `HEY-List` and `HEY-Thread` modes identify it.
+
 Lists follow a Subject, Sender, Labels / collections, and When scan order.
 Subject receives flexible width up to 70 columns by default; customize
 `hey-list-subject-max-width` to change the cap.  Sender grows up to 24 columns;
