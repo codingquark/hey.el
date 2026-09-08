@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.2.0 - 2026-09-08
+
+- Show unread/displayed counts in list headers at every width. Use `?` when
+  displayed records lack read state and `0/0` for an empty list.
+
 - Face each header-line element separately: `hey-header-account-face`,
   `hey-header-source-face`, `hey-header-subject-face`,
   `hey-header-count-face`, `hey-header-updated-face`,

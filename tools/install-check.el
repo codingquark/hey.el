@@ -51,7 +51,7 @@
        (package-file
         (expand-file-name
          (or (getenv "HEY_PACKAGE_FILE")
-             (hey-build-path "dist/hey-0.1.0.tar")))))
+             (hey-build-path "dist/hey-0.2.0.tar")))))
   (unwind-protect
       (progn
         (unless (file-readable-p package-file)
