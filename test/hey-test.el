@@ -284,10 +284,10 @@
     (setq hey--records (hey-test--records-from
                         (hey-test--posting 501 901 "Header row"))
           hey--last-refreshed nil)
-    (dolist (case '((130 . "Personal · Imbox · 1 shown · up to date")
-                    (90 . "Personal · Imbox · 1 shown · up to date")
-                    (70 . "Imbox · 1 shown · up to date")
-                    (40 . "Imbox · 1 · up to date")))
+    (dolist (case '((130 . "Personal · Imbox · 1/1 · up to date")
+                    (90 . "Personal · Imbox · 1/1 · up to date")
+                    (70 . "Imbox · 1/1 · up to date")
+                    (40 . "Imbox · 1/1 · up to date")))
       (hey--render-list nil (car case))
       (should (equal (hey--status-header) (cdr case)))
       ;; An absent status word or refresh time leaves no dangling separator.
@@ -317,7 +317,7 @@
     (let ((header (hey--status-header)))
       (dolist (case '(("Personal" . hey-header-account-face)
                       ("Imbox" . hey-header-source-face)
-                      ("1 shown" . hey-header-count-face)
+                      ("1/1" . hey-header-count-face)
                       ("up to date" . hey-header-status-face)
                       (" · " . hey-header-separator-face)))
         (should (eq (hey-test--header-face header (car case)) (cdr case))))

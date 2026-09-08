@@ -231,3 +231,6 @@ Move an item to active work when starting it; remove it when complete.
   path-disclosure, fake-boundary, or audit-bypass defect.
 - Automated and agent-driven work ran no authenticated HEY command, mailbox
   read, or HEY service network request.
+
+- 2026-09-08: Show unread/displayed counts in every list-header layout. Use
+  `?` when displayed records lack read state and `0/0` for an empty list.

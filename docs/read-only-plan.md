@@ -1403,3 +1403,7 @@ After context loss, resume in this order:
 8. Give concurrent writers disjoint paths, and have the orchestrator inspect
    the integrated diff and rerun its tests.
 9. Maintain the strict read-only allowlist through release.
+
+List headers show unread/displayed counts at every width. Count only displayed
+postings with explicit unseen state. Use `?` for unread when any displayed
+posting has unknown read state, and `0/0` for an empty list.

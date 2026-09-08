@@ -550,10 +550,16 @@ package-owned header face."
                                        'hey-header-account-face))
          (source (hey--header-element (hey--source-title)
                                       'hey-header-source-face))
-         (shown (hey--header-element (format "%d shown" count)
-                                     'hey-header-count-face))
-         (total (hey--header-element (number-to-string count)
-                                     'hey-header-count-face))
+         (shown (hey--header-element
+                 (format "%s/%d"
+                         (if (cl-some (lambda (posting)
+                                        (eq (hey-posting-seen posting) 'unknown))
+                                      hey--records)
+                             "?"
+                           (cl-count 'unseen hey--records
+                                     :key #'hey-posting-seen))
+                         count)
+                 'hey-header-count-face))
          (layout (or hey--layout
                      (hey--layout-for-width (hey--minimum-window-width)))))
     (hey--header-join
@@ -561,7 +567,7 @@ package-owned header face."
        ('wide (list account source shown state updated))
        ('medium (list account source shown state))
        ('narrow (list source shown state))
-       (_ (list source total state))))))
+       (_ (list source shown state))))))
 
 (defun hey--resize-buffer (&optional width)
   "Redraw this list for WIDTH from cached records only.
