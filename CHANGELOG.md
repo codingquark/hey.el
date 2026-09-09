@@ -1,7 +1,5 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
 ## Unreleased
 
 - List thread attachments with `A`, including embedded files and partial-read
@@ -16,74 +14,44 @@ All notable changes to this project will be documented in this file.
 - Ignore callbacks delivered during cancellation of a superseded request.
 - Deduplicate first-page rows as well as appended results.
 - Restrict thread metadata styling to the preamble.
+- Consolidate documentation and shorten comments and docstrings.
 
 ## 0.2.0 - 2026-09-08
 
-- Show unread/displayed counts in list headers at every width. Use `?` when
-  displayed records lack read state and `0/0` for an empty list.
-
-- Face each header-line element separately: `hey-header-account-face`,
-  `hey-header-source-face`, `hey-header-subject-face`,
-  `hey-header-count-face`, `hey-header-updated-face`,
-  `hey-header-separator-face`, `hey-header-status-face`,
-  `hey-header-warning-face`, and `hey-header-error-face`.  Each inherits
-  `header-line` beside its meaning-bearing face; `header-line` supplies the
-  theme's header background and other attributes as a fallback, which a
-  meaning-bearing face overrides when it sets them.  Header state text keeps
-  failure over partial-result warning over ordinary state; buffer bodies keep
-  the unlayered state faces.
-- Drop the `HEY` element from every header line, list and thread alike.  Both
-  now open with the account title, or with the source title once a narrower
-  layout drops the account; buffer names and mode names already carry the
-  package name.
-- Leave When blank for bundle rows without one readable topic because their
-  single posting timestamp does not describe every joined subject.  Open them
-  through the contact's read-only thread list when the posting supplies a
-  contact ID, including mail that the unseen-only bundle endpoint no longer
-  returns.
-- Order list columns as Subject, Sender, Labels / collections, and When.  Give
-  Subject and Sender flexible width up to customizable 70- and 24-column
-  maximums, keep compact subdued timestamps inside a fixed 12-column When
-  column, and remove Summary from list rows.
-- Stop stretching the When column across leftover window width.  It keeps its
-  preferred width after the last content column and leaves a two-column gutter
-  before the window edge, so surplus width stays empty instead of separating
-  Sender from its timestamp.  Below the 16-column irreducible minimal table the
-  gutter yields to the column floors.
-- Clip list memberships cells to their column width so a long label or
-  collection stops pushing the timestamp toward the window edge; complete
-  memberships remain in help text.
-- Show `[Load more]` below lists with another page.  `RET` or mouse-2 activates
-  the control; `M` remains available.  The control hides during requests and
-  after exhaustion, and activation keeps point on the last loaded row.
-- Render `/` search results without seen or unseen styling because search
-  responses have no authoritative `seen` field.  Other posting sources retain
-  the true-only seen rule.
-- Report a missing or unusable HEY CLI with package-owned guidance.  Discovery
-  and configured-path failures remain distinct, and no candidate path or
-  operating-system text reaches the list.
+- Show unread/displayed header counts at every width. Use `?` for unknown read
+  state and `0/0` for an empty list.
+- Give each header element a separate `hey-header-*` face with `header-line`
+  as a fallback. Prioritize failure over warning and ordinary state.
+- Lead headers with account or source; omit the package name.
+- Leave aggregate bundle timestamps blank. Open bundles through their
+  contact's seen-and-unseen thread list when a contact ID is available.
+- Order columns as Subject, Sender, Labels / collections, and When. Remove
+  Summary. Cap flexible Subject and Sender widths at configurable 70 and 24
+  columns. Keep When subdued and right-aligned in 12 columns.
+- Leave spare width after the table and a two-column gutter while column
+  minimums fit. The minimal table stops shrinking at 16 columns.
+- Clip memberships to their column and retain full values in help text.
+- Offer `[Load more]` below lists with another page. Accept `RET`, mouse-2,
+  or `M`; hide the button during requests and after exhaustion. Anchor appends
+  on the last loaded row.
+- Leave search read state unknown because the CLI supplies no authoritative
+  `seen` field. Retain the true-only seen rule for other sources.
+- Distinguish missing-CLI and configured-path failures with actionable guidance
+  that omits paths and operating-system errors.
 
 ## 0.1.0 - 2026-09-03
 
-- Establish the standalone three-library package structure.
-- Add normalized model, closed read-command transport, and read-only UI seams.
-- Add synthetic fixtures and a scenario-driven fake HEY executable.
-- Add isolated test, compile, lint, deterministic package, and install checks.
-- Add an Emacs 28.2 and 30.2 continuous-integration matrix.
-- Reuse bundle buffers and make the synthetic bundle expand to readable
-  threads instead of recursively producing another bundle.
-- Publish project metadata and package licensing under the MIT License.
-- Keep strict Checkdoc failures compatible with every supported Emacs target.
-- Update the pinned checkout action to its Node 24-compatible release.
-- Add theme-native semantic faces without imposing a package color palette.
-- Treat a posting as seen only when the CLI's `seen` field is literal true.
-- Highlight the current list row with the theme's `hl-line` face by default,
-  with `hey-highlight-current-row` as the public opt-out.
-- Humanize posting-list dates in local time as today, yesterday, or an ISO
-  calendar date while retaining safe fallbacks for missing and malformed
-  timestamps.
-- Split wide-layout flexible width three-to-two between Subject and Summary,
-  truncate both with complete help text, and omit the memberships column when
-  every loaded row has no memberships.
-- Generate package descriptors from `hey.el` metadata instead of tracking
-  `hey-pkg.el`, matching MELPA packaging conventions.
+- Establish the three-library model, transport, and read-only UI architecture.
+- Add synthetic fixtures, a fake CLI, isolated checks, deterministic packaging,
+  and clean-install verification. Test Emacs 28.2 and 30.2 in CI.
+- Reuse bundle buffers and make demo bundles expand to readable threads.
+- Publish repository metadata and the MIT License.
+- Support strict Checkdoc checks across the Emacs matrix and update the pinned
+  checkout action for Node 24.
+- Add theme-inheriting faces and optional current-row highlighting through
+  `hey-highlight-current-row`.
+- Treat a posting as seen only when the CLI returns literal JSON `true`.
+- Show list dates as today, yesterday, or an ISO date, with safe fallbacks.
+- Split flexible wide-layout space three-to-two between Subject and Summary;
+  retain truncated values in help and omit all-empty memberships.
+- Generate `hey-pkg.el` from package headers instead of tracking it.

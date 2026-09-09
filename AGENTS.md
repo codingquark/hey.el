@@ -1,65 +1,73 @@
-# Repository Guidelines
+# Repository guidelines
 
 ## Scope and safety
 
-This repository implements an Emacs reader for the official HEY CLI. The first
-release is read-only by construction: it may read HEY mailbox/application data,
-but it must not expose or build commands that mutate mailbox or application
-state. CLI-owned authentication refresh, credential migration, install-ID
-creation, and HTTP cache updates are operational side effects, not mailbox
-mutations, and must be documented accurately.
+Build a read-only Emacs interface to the official HEY CLI. Do not
+expose mailbox or application-state mutations, generic command
+runners, or options that enable writes. New CLI operations require
+explicit design review.
 
-Never run an authenticated HEY command, capture live mailbox data, or inspect
-private CLI caches during automated or agent-driven work. Tests must bind
-`hey-executable` to the repository's fake executable and must fail closed if it
-is unavailable. Synthetic or deliberately sanitized fixtures only.
+Attachment saving may write a user-selected local file. Never replace
+an existing destination. Verify the staged file before publication
+and remove only request-owned staging after the process stops.
 
-## Architecture
+Never run authenticated HEY commands, capture live mailbox data, or
+inspect private CLI caches during automated or agent-driven work.
+Use synthetic or deliberately sanitized fixtures. Tests must bind
+`hey-executable` to the repository fake and fail if it is unavailable;
+never resolve or fall back to the installed CLI.
+
+The CLI owns authentication and operational writes such as credential
+refresh, installation IDs, and HTTP caches. Document those effects
+accurately; read-only refers to mailbox and application state.
+
+## Code
 
 - `hey-model.el`: pure records, normalization, sanitization, formatting.
-- `hey-cli.el`: closed read-command builders and private async transport.
-- `hey.el`: public entry point and list/thread presentation.
+- `hey-cli.el`: closed argv builders and private async transport.
+- `hey.el`: public commands and list, thread, and attachment views.
 
-Raw JSON stops at the model boundary. UI code must not inspect CLI JSON keys.
-Runtime commands are executable-plus-argv lists, never shell strings. Only
-named read operations may reach the private process primitive.
+Raw JSON stops at the model boundary. UI code uses normalized records.
+Runtime commands are executable-plus-argv lists, never shell strings.
+Only named operations may reach the private process primitive. Keep
+the official origin fixed and authentication owned by the CLI.
 
-## Project workflow
+Keep sessions buffer-local. Check source and generation before
+committing callbacks; identify rows by composite keys. Preserve
+metadata sanitization, body containment, validated link activation,
+and request cleanup on cancellation or nonlocal exits. Do not persist
+mail bodies or search text, or log response content and arguments.
 
-`docs/read-only-plan.md` is the canonical design record and `PROJECT.md` is the
-live milestone tracker. Update both when an implementation decision changes.
-Keep machine-specific paths and private research references in the ignored
-`.project-local.md`, never in public artifacts.
+Use lexical binding, two-space indentation, lower-case hyphenated
+names, and the `hey-` prefix. Declare dependencies and support Emacs
+28.2 or newer unless an approved change raises the minimum.
 
-Give concurrent writers disjoint path sets. The orchestrator reviews every
-diff, integrates changes, and runs the relevant checks. Human approval gates in
-`PROJECT.md` are not agent-completable.
+## Prose
 
-## Documentation style
+Follow Denote and Modus themes: direct summaries, active voice, present
+tense. Start function docstrings with an imperative summary; keep
+simple ones to one line. Explain data shapes and non-obvious contracts
+beside the code. Comments explain purpose or rationale.
 
-Follow the [Modus themes](https://github.com/protesilaos/modus-themes) prose
-conventions: terse, active voice, and present tense. Start function docstrings
-with an imperative summary; keep simple docstrings to one line. Add detail only
-for data shapes, safety invariants, and non-obvious contracts.
+Keep usage and development instructions in `README.md`, release
+history in `CHANGELOG.md`, and validation evidence in commit or review
+messages. Avoid separate documents that restate code or tests. Keep
+machine paths and private research in the ignored `.project-local.md`.
 
-Comments state purpose or rationale, not code. Describe current behavior, not
-superseded implementations. Keep release history in `CHANGELOG.md` and dated
-decisions or acceptance evidence in `PROJECT.md`.
+## Workflow
 
-## Build and test
+Preserve unrelated worktree changes. Give concurrent writers disjoint
+paths and review the integrated diff. Run `make check` before review;
+it covers tests, compilation, lint, the read-operation audit, packaging,
+and clean installation. Use synthetic data for UI exercises.
 
-Use `make check` as the full local gate. Narrow targets are `make test`,
-`make compile`, `make lint`, `make package`, and `make install-check`.
-Development and CI tests must not resolve or execute the user's installed
-`hey` binary.
+Authenticated validation is a separately approved human session;
+unseen-thread tests need separate approval. Agents cannot complete
+human acceptance gates. Attachment user testing remains outstanding;
+live updates, folding, and preview remain deferred.
 
-Emacs Lisp uses lexical binding, two-space indentation, lower-case hyphenated
-symbols, and the `hey-` prefix. Public functions and variables need docstrings.
-Keep package dependencies explicit and support Emacs 28.2 or newer unless a
-reviewed implementation need raises the floor.
-
-## Git and release policy
-
-Use short imperative commit subjects and keep commits logically scoped. Do not
-configure a remote, push, tag, publish, submit to MELPA, or add a legal license
-grant without explicit user approval.
+Use short imperative commit subjects and logically scoped commits.
+Do not configure a remote, push, tag, publish, submit to MELPA, or add
+a license grant without explicit user approval. Existing approval for
+the v0.1.0 release and MELPA submission does not authorize new releases.
+Do not submit to MELPA before 2026-10-03; recheck eligibility then.
