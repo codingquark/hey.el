@@ -194,6 +194,8 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
 (defvar-local hey--attachments nil)
 (defvar-local hey--attachment-thread nil)
 (defvar-local hey--attachment-origin nil)
+(defvar-local hey--attachment-origin-window-state nil
+  "Origin window followed by an alist of its saved quit parameters.")
 (defvar-local hey--attachment-notice nil)
 (defvar-local hey--attachment-directory nil)
 (defvar-local hey--attachment-save-request nil)
@@ -1498,6 +1500,12 @@ FACE defaults to `hey-status-face'."
     (user-error "Wait for a readable HEY thread"))
   (let* ((thread hey--thread)
          (origin (point-marker))
+         (window-state
+          (cons (selected-window)
+                (mapcar (lambda (parameter)
+                          (cons parameter
+                                (copy-tree (window-parameter nil parameter))))
+                        '(quit-restore quit-restore-prev))))
          (overrides hey--operation-overrides)
          (name (format "*HEY attachments %s %s*"
                        (hey-thread-account-id thread) (hey-thread-topic-id thread)))
@@ -1512,6 +1520,7 @@ FACE defaults to `hey-status-face'."
         (set-marker hey--attachment-origin nil))
       (setq hey--attachment-thread thread
             hey--attachment-origin origin
+            hey--attachment-origin-window-state window-state
             hey--operation-overrides overrides)
       (when fresh (hey-refresh-attachments)))
     (hey-display-buffer buffer 'same-window)))
@@ -1521,11 +1530,17 @@ FACE defaults to `hey-status-face'."
   (interactive)
   (if (and (markerp hey--attachment-origin)
            (marker-buffer hey--attachment-origin))
-      (let ((origin hey--attachment-origin))
-        ;; Preserve the thread's return path to its originating mail list.
+      (let ((origin hey--attachment-origin)
+            (window-state hey--attachment-origin-window-state))
         (quit-window)
         (unless (eq (current-buffer) (marker-buffer origin))
           (hey-display-buffer (marker-buffer origin) 'same-window))
+        ;; Older Emacs versions replace the thread's quit state when opening
+        ;; attachments.  Restore it only in the window that originally owned it.
+        (when (eq (selected-window) (car window-state))
+          (dolist (parameter (cdr window-state))
+            (set-window-parameter (selected-window)
+                                  (car parameter) (cdr parameter))))
         (goto-char origin))
     (quit-window)))
 

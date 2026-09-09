@@ -8,7 +8,8 @@
 - Require HEY CLI 1.4.3 for attachment discovery and download fixes. Local
   saving requires a filesystem supporting hard links.
 - Preserve the return path from attachments through the thread to the mail
-  list, including repeated visits and other-window displays.
+  list, including repeated visits and other-window displays on Emacs 28.2
+  and newer.
 - Show saving in the header only while a download runs. Report start and final
   results in the echo area.
 - Ignore callbacks delivered during cancellation of a superseded request.
