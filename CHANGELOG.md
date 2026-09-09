@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Ignore callbacks delivered during cancellation of a superseded request.
+- Deduplicate first-page rows as well as appended results.
+- Restrict thread metadata styling to the preamble.
+
 ## 0.2.0 - 2026-09-08
 
 - Show unread/displayed counts in list headers at every width. Use `?` when

@@ -1297,5 +1297,63 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
                  (lambda () "file:///tmp/private")))
         (should-error (hey-follow-link) :type 'user-error)))))
 
+(ert-deftest hey-ui-cancellation-invalidates-callback-before-delivery ()
+  "Keep synchronous cancellation callbacks out of the next refresh."
+  (hey-test-with-list
+    (let ((renders 0) failure)
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_account _box _page _owner _key _generation _success fail)
+                    (setq failure fail)
+                    'pending))))
+      (hey-refresh)
+      (cl-letf (((symbol-function 'hey-cli-cancel-request)
+                 (lambda (_request)
+                   (funcall failure (make-hey-error :category 'canceled
+                                                   :message "Canceled"))))
+                ((symbol-function 'hey--render-list)
+                 (lambda (&rest _) (cl-incf renders))))
+        (hey-refresh))
+      (should (= renders 1))
+      (should hey--loading)
+      (should-not hey--error))))
+
+(ert-deftest hey-ui-refresh-deduplicates-first-page ()
+  "Keep one row per identity on initial load and refresh."
+  (hey-test-with-list
+    (setq hey--operation-overrides
+          `((hey-cli-box-view
+             . ,(lambda (_account _box _page _owner _key _generation success _failure)
+                  (funcall success
+                           (hey-test--postings-envelope
+                            (list (hey-test--posting 501 901 "First")
+                                  (hey-test--posting 501 901 "Duplicate")
+                                  (hey-test--posting 502 902 "Second"))))
+                  nil))))
+    (dotimes (_ 2)
+      (hey-refresh)
+      (should (equal (mapcar #'hey-posting-subject hey--records)
+                     '("First" "Second"))))))
+
+(ert-deftest hey-ui-preamble-faces-do-not-style-message-bodies ()
+  "Apply metadata faces only to the generated thread preamble."
+  (with-temp-buffer
+    (hey-thread-mode)
+    (let ((envelope (copy-tree (hey-test--thread-envelope))))
+      (setcdr (assoc "body" (car (cdr (assoc "data" envelope))))
+              "Subject: body text\nLabels: ordinary prose")
+      (setq hey--thread
+            (plist-get (hey-model-normalize-thread envelope
+                         '(:account-id "101" :topic-id "901" :subject "Subject"))
+                       :value)))
+    (hey--render-thread)
+    (goto-char (point-min))
+    (should (memq 'hey-metadata-label-face (get-text-property (point) 'face)))
+    (dolist (text '("Subject: body text" "Labels: ordinary prose"))
+      (search-forward text)
+      (let ((face (get-text-property (- (point) (length text)) 'face)))
+        (should-not (if (listp face) (memq 'hey-metadata-label-face face)
+                      (eq face 'hey-metadata-label-face)))))))
+
 (provide 'hey-test)
 ;;; hey-test.el ends here

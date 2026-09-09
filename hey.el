@@ -235,8 +235,10 @@ a named operation, never the private process primitive."
 
 (defun hey--next-generation ()
   "Cancel existing work and return the next request generation."
+  ;; Process deletion can deliver the old callback synchronously.
+  (cl-incf hey--generation)
   (hey--cancel-request)
-  (cl-incf hey--generation))
+  hey--generation)
 
 (defun hey--commit-p (buffer source-key generation)
   "Return non-nil when BUFFER still accepts SOURCE-KEY and GENERATION."
@@ -668,32 +670,30 @@ the named operation's result."
               (hey--dispatch-source
                request-source page buffer source-key generation
                (lambda (envelope)
-             (when (hey--commit-p buffer source-key generation)
-               (with-current-buffer buffer
-                 (let* ((normalized
-                         (hey-model-normalize-postings envelope request-source))
-                        (incoming (plist-get normalized :value))
-                        (updated-source (plist-get normalized :source))
-                        (combined (if append
-                                      (hey--deduplicate hey--records incoming)
-                                    incoming)))
-                   ;; A cursor which advances but contributes no new identity
-                   ;; cannot make progress safely.  Stop before it can loop.
-                   (when (and append
-                              (= old-count (length combined))
-                              (eq (hey-source-continuation-kind updated-source)
-                                  'cursor))
-                     (setf (hey-source-continuation updated-source) nil
-                           (hey-source-exhausted updated-source) t))
-                   (setq hey--records combined
-                         hey--source updated-source
-                         hey--warnings (plist-get normalized :warnings)
-                         hey--loading nil
-                         hey--stale nil
-                         hey--error nil
-                         hey--request nil
-                         hey--last-refreshed (current-time))
-                   (hey--render-list t)))))
+                 (when (hey--commit-p buffer source-key generation)
+                   (with-current-buffer buffer
+                     (let* ((normalized
+                             (hey-model-normalize-postings envelope request-source))
+                            (incoming (plist-get normalized :value))
+                            (updated-source (plist-get normalized :source))
+                            (combined (hey--deduplicate
+                                       (and append hey--records) incoming)))
+                       ;; Stop cursor pagination when it adds no new rows.
+                       (when (and append
+                                  (= old-count (length combined))
+                                  (eq (hey-source-continuation-kind updated-source)
+                                      'cursor))
+                         (setf (hey-source-continuation updated-source) nil
+                               (hey-source-exhausted updated-source) t))
+                       (setq hey--records combined
+                             hey--source updated-source
+                             hey--warnings (plist-get normalized :warnings)
+                             hey--loading nil
+                             hey--stale nil
+                             hey--error nil
+                             hey--request nil
+                             hey--last-refreshed (current-time))
+                       (hey--render-list t)))))
                (lambda (error)
                  (when (hey--commit-p buffer source-key generation)
                    (with-current-buffer buffer
@@ -1134,7 +1134,6 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
         (with-current-buffer buffer
           (unless (derived-mode-p 'hey-list-mode)
             (hey-list-mode))
-          (hey--cancel-request)
           (setq hey--account account
                 hey--source source
                 hey--origin origin
@@ -1162,10 +1161,9 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
     (with-current-buffer buffer
       (unless (derived-mode-p 'hey-thread-mode)
         (hey-thread-mode))
-      (hey--cancel-request)
+      (hey--next-generation)
       (setq hey--origin origin
             hey--thread nil
-            hey--generation (1+ hey--generation)
             hey--thread-key thread-key
             hey--loading t
             hey--error nil
@@ -1279,9 +1277,11 @@ face."
 (defun hey--render-thread ()
   "Render the normalized buffer-local HEY thread."
   (let ((inhibit-read-only t)
-        warning-start)
+        preamble-end warning-start)
     (erase-buffer)
     (insert (hey-model-thread-markdown hey--thread))
+    (setq preamble-end
+          (text-property-any (point-min) (point-max) 'hey-entry-start t))
     (when hey--warnings
       (goto-char (point-max))
       (setq warning-start (point))
@@ -1294,7 +1294,7 @@ face."
       (goto-char (point-min))
       (while (re-search-forward
               "^\\(Subject:\\|Senders:\\|Messages shown:\\|Account:\\|Opened from:\\|Labels:\\|Collections:\\|Notice:\\)"
-              nil t)
+              preamble-end t)
         (add-face-text-property (match-beginning 1) (match-end 1)
                                 'hey-metadata-label-face t))
       (goto-char (point-min))
