@@ -21,11 +21,6 @@
 (require 'subr-x)
 (require 'hey-model)
 
-(defgroup hey nil
-  "Read HEY mail in Emacs through the official CLI."
-  :group 'applications
-  :prefix "hey-")
-
 (defcustom hey-executable nil
   "Absolute path to the official HEY executable.
 
@@ -116,11 +111,9 @@ Attachment discovery and download isolation require version 1.4.3.")
   value)
 
 (defun hey-cli--positional-string (value description)
-  "Return VALUE after validating it as positional DESCRIPTION data.
-
-Closed builders never allow a server-provided identifier to be reinterpreted
-as a Cobra flag.  Search text is the sole exception because it follows an
-explicit `--' delimiter."
+  "Validate positional VALUE, using DESCRIPTION in errors.
+Reject leading dashes to prevent flag injection.  Search uses a separate
+validator because its query follows `--'."
   (setq value (hey-cli--data-string value description))
   (when (string-prefix-p "-" value)
     (user-error "%s must not begin with a dash" description))
@@ -147,6 +140,8 @@ explicit `--' delimiter."
   (append argv '("--json")))
 
 ;;; Pure closed command builders
+
+;; Omit --limit on cursor reads: a truncated page cannot be resumed safely.
 
 (defun hey-cli-build-version ()
   "Build argv for the HEY version read."
@@ -268,8 +263,7 @@ always positional data."
   (let ((process-environment (copy-sequence process-environment)))
     (dolist (name hey-cli--removed-environment-variables)
       (setenv name nil))
-    ;; Deliberately do not remove HEY_NO_KEYRING: it selects the user's stored
-    ;; credential backend rather than injecting credentials or an endpoint.
+    ;; HEY_NO_KEYRING selects the stored credential backend.
     (setenv "HEY_NONINTERACTIVE" "1")
     process-environment))
 
@@ -300,11 +294,9 @@ Git worktrees and repository-local HEY configuration are both excluded."
     ancestors))
 
 (defun hey-cli--verify-working-ancestor (directory)
-  "Reject DIRECTORY unless it is a trusted, non-writable local directory.
-
-Directories owned by the current user or root are trusted.  Group- or
-world-writable directories are rejected, except for root-owned sticky
-directories such as `/tmp'."
+  "Reject DIRECTORY unless its owner and permissions are trusted.
+Require the current user or root as owner.  Reject group/world write access,
+except on root-owned sticky directories such as `/tmp'."
   (when (or (file-remote-p directory) (file-symlink-p directory))
     (error "HEY working directory has an unsafe symlink or remote ancestor"))
   (let* ((attributes (file-attributes directory 'integer))
@@ -395,20 +387,19 @@ and whose cdr lists the components that still need to be created."
         (error "HEY working directory changed during secure preparation"))
       directory)))
 
-;; Executable messages are package-owned prose: they name the option to change
-;; and the action to take, never a candidate path or operating-system error.
+;; Give actionable guidance without exposing paths or operating-system errors.
 
 (define-error
-  'hey-cli-executable-missing
-  (format "HEY CLI was not found in `exec-path'. Install HEY CLI %s or newer \
+ 'hey-cli-executable-missing
+ (format "HEY CLI was not found in `exec-path'. Install HEY CLI %s or newer \
 and restart Emacs, or set `hey-executable'." hey-cli-minimum-version)
-  'error)
+ 'error)
 
 (define-error
-  'hey-cli-executable-configured
-  "Configured `hey-executable' is not a local executable file. Set an absolute \
+ 'hey-cli-executable-configured
+ "Configured `hey-executable' is not a local executable file. Set an absolute \
 path, or nil to search `exec-path'; no fallback is taken."
-  'error)
+ 'error)
 
 (defconst hey-cli--vanished-message
   "The HEY executable became unavailable as the request started. Reinstall it, \
@@ -499,7 +490,7 @@ server data."
    (t value)))
 
 (defun hey-cli--parse-json (string)
-  "Parse STRING into the frozen HEY JSON representation."
+  "Parse JSON STRING with string keys, list arrays, and explicit false."
   (hey-cli--json-to-alists
    (json-parse-string string
                       :object-type 'hash-table
@@ -527,7 +518,7 @@ server data."
   (alist-get status '((1 . usage) (2 . not-found) (3 . auth)
                       (4 . forbidden) (5 . rate-limit) (6 . network)
                       (7 . api) (8 . ambiguous))
-            'cli-exit))
+             'cli-exit))
 
 (defun hey-cli--delete-request-buffers (request)
   "Delete REQUEST's private processes and capture buffers."
@@ -574,15 +565,12 @@ CATEGORY and EXIT-STATUS are used only for redacted diagnostics."
               (error
                (hey-cli--log (hey-cli--request-operation request) exit-status
                              'callback-error 0 nil)))))
-      ;; Callback `quit', `throw', and other nonlocal exits must never retain
-      ;; raw stdout or stderr in the private capture buffers.
+      ;; Release captured output even when a callback exits nonlocally.
       (hey-cli--delete-request-buffers request))))
 
 (defun hey-cli--abort-request-setup (request process stderr-process)
   "Clean up REQUEST after setup aborts using PROCESS and STDERR-PROCESS."
-  ;; Mark completion before deleting either process: deletion can run the
-  ;; sentinel synchronously, and an incompletely installed request must not
-  ;; call application callbacks.
+  ;; Process deletion can run the sentinel; suppress callbacks during setup.
   (setf (hey-cli--request-completed request) t)
   (when (processp process)
     (setf (hey-cli--request-process request) process))
@@ -803,9 +791,7 @@ resources after the process stops, even when callbacks cannot run."
                     (setf (hey-cli--request-process request) process)
                     (setq kill-hook
                           (lambda ()
-                            ;; A process sentinel can run before `kill-buffer'
-                            ;; finishes.  Clear the owner first so that completion
-                            ;; still cannot call into a dying buffer.
+                            ;; Suppress callbacks before deletion runs the sentinel.
                             (setf (hey-cli--request-owner request) nil)
                             (hey-cli-cancel-request request)))
                     (setf (hey-cli--request-kill-hook request) kill-hook)
@@ -822,8 +808,7 @@ resources after the process stops, even when callbacks cannot run."
                   operation owner failure
                   (hey-cli--start-failure-message err executable))
                  nil))
-            ;; Also covers `quit' and a caller's nonlocal exit while setup is
-            ;; in progress; neither can leave the just-created CLI orphaned.
+            ;; Nonlocal exits during setup must also terminate the process.
             (unless setup-complete
               (hey-cli--abort-request-setup request process stderr-process))))
       ((hey-cli-executable-missing hey-cli-executable-configured)
@@ -920,9 +905,8 @@ PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
 
 (defun hey-cli-contact-threads
     (account-id contact-id page owner source-key generation success failure)
-  "Read CONTACT-ID threads in ACCOUNT-ID for OWNER, tagged by request state.
-
-PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
+  "Read CONTACT-ID threads in ACCOUNT-ID for OWNER at optional PAGE.
+Tag SUCCESS or FAILURE with SOURCE-KEY and GENERATION."
   (hey-cli--start-process
    'contact-threads
    (hey-cli-build-contact-threads account-id contact-id page)

@@ -4,7 +4,7 @@
 ;; SPDX-License-Identifier: MIT
 
 ;; Author: Dhavan Vaidya <456712+codingquark@users.noreply.github.com>
-;; Assisted-by: Codex:gpt-5
+;; Assisted-by: Codex:gpt-5, gpt-6
 ;; Version: 0.2.0
 ;; Package-Requires: ((emacs "28.2") (markdown-mode "2.8"))
 ;; Keywords: mail, comm
@@ -52,9 +52,8 @@
   "Face for HEY operation failures."
   :group 'hey)
 
-;; Each header element wears its own face, which retains a per-element
-;; customization hook.  `header-line' supplies fallback attributes such as the
-;; background, unless an earlier face in the inheritance list sets them.
+;; Keep header elements independently customizable.  Earlier inherited faces
+;; take priority over the `header-line' fallback.
 
 (defface hey-header-account-face
   '((t :inherit header-line))
@@ -222,11 +221,8 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
   "Column fields, titles, and preferred widths for each list layout.")
 
 (defconst hey--list-right-gutter 2
-  "Empty window columns kept to the right of the list table.
-
-The gutter keeps the When column off the window edge.  Column floors win
-when a window is too narrow to spare it, so the table never shrinks below
-its irreducible width to preserve the gutter.")
+  "Preferred empty columns to the right of the table.
+Column minimums take priority when the window cannot fit the gutter.")
 
 (defun hey--call (operation &rest arguments)
   "Call named CLI OPERATION with ARGUMENTS.
@@ -325,13 +321,9 @@ posting, and at the narrow breakpoint where Subject takes priority."
       (cl-remove 'memberships columns :key #'car))))
 
 (defun hey--column-format (layout columns width)
-  "Return a tabulated-list format for LAYOUT's COLUMNS at WIDTH.
-
-Subject and Sender take available space up to their configured limits.
-When keeps its preferred width, so surplus width stays empty to the
-right of the table instead of widening the timestamp column.  Flexible
-width stops `hey--list-right-gutter' columns short of the window edge
-while the column floors still fit."
+  "Return the table format for LAYOUT's COLUMNS at window WIDTH.
+Subject and Sender grow up to their configured limits; When stays fixed.
+Reserve `hey--list-right-gutter' while column minimums fit."
   (let* ((layout-columns (alist-get layout hey--list-layouts))
          (subject-base (nth 2 (assq 'subject layout-columns)))
          (sender-column (assq 'sender columns))
@@ -516,26 +508,20 @@ When WIDTH is non-nil, use it for responsive column selection."
 
 (defconst hey--header-separator
   (propertize " · " 'face 'hey-header-separator-face)
-  "Separator between HEY header-line elements.
-Its face is package-owned so separators recede below the elements.")
+  "Separator between HEY header elements.")
 
 (defun hey--header-element (text face)
-  "Return header TEXT wearing FACE, or nil when TEXT is absent.
-
-An empty string counts as absent so a missing part never leaves a
-separator behind."
+  "Return header TEXT with FACE, or nil for absent or empty TEXT."
   (when (and (stringp text) (not (string-empty-p text)))
     (propertize text 'face face)))
 
 (defun hey--header-join (parts)
-  "Join non-absent header PARTS with `hey--header-separator'."
+  "Join non-nil header PARTS with `hey--header-separator'."
   (string-join (delq nil parts) hey--header-separator))
 
 (defun hey--status-header ()
-  "Return the sticky status header for the current list buffer.
-Led by the account title, or the source title once width drops the
-account, never by the package name.  Every element carries its own
-package-owned header face."
+  "Return account, source, unread/displayed counts, and list status.
+Omit lower-priority elements as the window narrows."
   (let* ((count (length hey--records))
          (base-state (cond
                       (hey--loading "loading")
@@ -581,9 +567,7 @@ package-owned header face."
        (_ (list source shown state))))))
 
 (defun hey--resize-buffer (&optional width)
-  "Redraw this list for WIDTH from cached records only.
-
-This function never calls the transport."
+  "Redraw this list for WIDTH using cached records."
   (when (and (derived-mode-p 'hey-list-mode)
              (hey--configure-columns width))
     (hey--render-list t width)))
@@ -617,32 +601,20 @@ This function never calls the transport."
 
 SOURCE-KEY and GENERATION identify the session; SUCCESS and FAILURE receive
 the named operation's result."
-  (pcase (hey-source-kind source)
-    ('box
-     (hey--call 'hey-cli-box-view (hey-source-account-id source)
-                (hey-source-id source) page owner source-key generation
-                success failure))
-    ('bundle
-     (hey--call 'hey-cli-bundle-view (hey-source-account-id source)
-                (hey-source-id source) page owner source-key generation
-                success failure))
-    ('contact-threads
-     (hey--call 'hey-cli-contact-threads (hey-source-account-id source)
-                (hey-source-id source) page owner source-key generation
-                success failure))
-    ('search
-     (hey--call 'hey-cli-search (hey-source-account-id source)
-                (hey-source-query source) page owner source-key generation
-                success failure))
-    ('label
-     (hey--call 'hey-cli-label-view (hey-source-account-id source)
-                (hey-source-id source) page owner source-key generation
-                success failure))
-    ('collection
-     (hey--call 'hey-cli-collection-view (hey-source-account-id source)
-                (hey-source-id source) page owner source-key generation
-                success failure))
-    (_ (error "Unsupported HEY source kind: %S" (hey-source-kind source)))))
+  (let ((operation
+         (pcase (hey-source-kind source)
+           ('box 'hey-cli-box-view)
+           ('bundle 'hey-cli-bundle-view)
+           ('contact-threads 'hey-cli-contact-threads)
+           ('search 'hey-cli-search)
+           ('label 'hey-cli-label-view)
+           ('collection 'hey-cli-collection-view)
+           (_ (error "Unsupported HEY source kind: %S" (hey-source-kind source))))))
+    (hey--call operation (hey-source-account-id source)
+               (if (eq (hey-source-kind source) 'search)
+                   (hey-source-query source)
+                 (hey-source-id source))
+               page owner source-key generation success failure)))
 
 (defun hey--deduplicate (existing additions)
   "Append unique ADDITIONS to EXISTING by composite posting identity."
@@ -760,8 +732,8 @@ the named operation's result."
          :key (list 'box (hey-account-id account) hey-initial-box)
          :kind 'box :account-id (hey-account-id account)
          :id hey-initial-box :title (if (string= hey-initial-box "imbox")
-                                       "Imbox"
-                                     (capitalize hey-initial-box))
+                                        "Imbox"
+                                      (capitalize hey-initial-box))
          :continuation-kind 'cursor)
         hey--records nil hey--warnings nil hey--error nil hey--stale nil)
   (rename-buffer (hey--public-list-name) t)
@@ -1053,7 +1025,7 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                  (hey--render-list t))))))))
 
 (defun hey-search (query)
-  "Search the current HEY account for private QUERY."
+  "Search the current HEY account for QUERY without recording history."
   (interactive
    (list
     (let ((history (make-symbol "hey-private-search-history")))
@@ -1254,11 +1226,7 @@ FACE defaults to `hey-status-face'."
     (goto-char (point-min))))
 
 (defun hey--thread-header ()
-  "Return a compact sticky orientation header for this thread.
-Like `hey--status-header', this header opens with the account title, or
-with the source title once width drops the account, and never with the
-package name.  Every element carries its own package-owned header
-face."
+  "Return thread context and message count, adapted to window width."
   (if (not (hey-thread-p hey--thread))
       (if hey--loading
           (hey--header-element "loading" 'hey-header-status-face)
@@ -1350,7 +1318,7 @@ face."
   (hey--refresh nil))
 
 (define-derived-mode hey-list-mode tabulated-list-mode "HEY-List"
-  "Major mode for browsing read-only HEY posting lists."
+  "Browse HEY posting lists without changing mailbox state."
   (setq-local hey--account nil
               hey--configured-account nil
               hey--source nil
@@ -1380,7 +1348,7 @@ face."
   (tabulated-list-init-header))
 
 (define-derived-mode hey-thread-mode markdown-view-mode "HEY-Thread"
-  "Major mode for reading one HEY thread without mailbox mutations."
+  "Read a HEY thread without changing mailbox state."
   (setq-local hey--thread nil
               hey--thread-key nil
               hey--origin nil
