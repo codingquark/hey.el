@@ -98,6 +98,14 @@ sources such as search which do not."
   "A transport or CLI error safe for presentation by the UI."
   category message code hint exit-status)
 
+(cl-defstruct hey-attachment
+  "One downloadable file with an opaque CLI identity."
+  id message-id filename content-type byte-size)
+
+(cl-defstruct hey-saved-attachment
+  "A CLI download result whose path is data, never an instruction."
+  id path byte-size)
+
 (defun hey-model--get (key object)
   "Return the value for string KEY in alist OBJECT."
   (and (hey-model--object-p object) (cdr (assoc-string key object))))
@@ -618,6 +626,47 @@ and `:warnings'.  SOURCE is not mutated."
   "Return sanitized, single-line notice text from ENVELOPE, or nil."
   (let ((notice (hey-model--clean-string (hey-model--get "notice" envelope))))
     (unless (string-empty-p notice) notice)))
+
+(defun hey-model--attachment-id (value)
+  "Return opaque attachment identity VALUE when safe as CLI data."
+  (and (stringp value)
+       (not (string-empty-p value))
+       (not (string-prefix-p "-" value))
+       (not (string-match-p "[\0-\x20\x7f]" value))
+       (equal value (hey-model-sanitize-metadata value))
+       value))
+
+(defun hey-model-normalize-attachments (envelope)
+  "Normalize attachment ENVELOPE into records, warnings, and a notice."
+  (let ((data (hey-model--array-data envelope)) records warnings ids)
+    (if (eq data 'malformed)
+        (push "Attachment response does not contain a list." warnings)
+      (dolist (raw data)
+        (let ((id (hey-model--attachment-id (hey-model--get "id" raw)))
+              (message-id (hey-model--id-string (hey-model--get "message_id" raw)))
+              (size (hey-model--get "byte_size" raw)))
+          (if (or (not id) (not message-id) (member id ids))
+              (push "An attachment with an invalid or duplicate identity was skipped."
+                    warnings)
+            (push id ids)
+            (push (make-hey-attachment
+                   :id id :message-id message-id
+                   :filename (hey-model--clean-string (hey-model--get "filename" raw))
+                   :content-type (hey-model--clean-string
+                                  (hey-model--get "content_type" raw))
+                   :byte-size (and (integerp size) (>= size 0) size))
+                  records)))))
+    (list :value (nreverse records) :warnings (nreverse warnings)
+          :notice (hey-model-envelope-notice envelope))))
+
+(defun hey-model-normalize-saved-attachment (envelope)
+  "Normalize download ENVELOPE, returning nil for an incomplete result."
+  (let* ((data (hey-model--get "data" envelope))
+         (id (hey-model--attachment-id (hey-model--get "id" data)))
+         (path (hey-model--get "path" data))
+         (size (hey-model--get "byte_size" data)))
+    (when (and id (stringp path) (integerp size) (>= size 0))
+      (make-hey-saved-attachment :id id :path path :byte-size size))))
 
 (defun hey-model--body-state (raw)
   "Map known RAW CLI body state strings to bounded symbols."

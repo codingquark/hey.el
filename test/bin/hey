@@ -30,6 +30,37 @@ if [ -n "$record" ]; then
 fi
 
 case $scenario in
+  attachment-list)
+    cat "$fixture_dir/attachments.json"
+    ;;
+  attachment-save|attachment-delay|attachment-failed|attachment-bad-result)
+    attachment_id=
+    output=
+    while [ "$#" -gt 0 ]; do
+      case $1 in
+        save) shift; attachment_id=$1 ;;
+        --output) shift; output=$1 ;;
+      esac
+      shift
+    done
+    # File-writing scenarios fail closed outside the test-owned root.
+    test_root=${HEY_EMACS_TEST_SAVE_ROOT:?Missing synthetic save root}
+    case $output in
+      "$test_root"/*) ;;
+      *) exit 1 ;;
+    esac
+    printf 'partial' > "$(dirname -- "$output")/.hey-file-partial"
+    if [ "$scenario" = attachment-delay ]; then sleep 2; fi
+    if [ "$scenario" = attachment-failed ]; then
+      cat "$fixture_dir/transport-error.json" >&2
+      exit 7
+    fi
+    printf 'Synthetic attachment.\n' > "$output"
+    escaped_output=$(printf '%s' "$output" | sed 's/\\/\\\\/g;s/"/\\"/g')
+    if [ "$scenario" = attachment-bad-result ]; then attachment_id=wrong; fi
+    printf '{"ok":true,"data":{"id":"%s","path":"%s","byte_size":22}}\n' \
+      "$attachment_id" "$escaped_output"
+    ;;
   success)
     cat "$fixture_dir/transport-success.json"
     ;;

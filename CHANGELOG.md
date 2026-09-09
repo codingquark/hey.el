@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- List thread attachments with `A`, including embedded files and partial-read
+  notices. Save to a new local file with `s` or `RET`; cancel with `c`.
+  Returning to the thread keeps downloads running. Never replace destinations.
+- Require HEY CLI 1.4.3 for attachment discovery and download fixes. Local
+  saving requires a filesystem supporting hard links.
+- Preserve the return path from attachments through the thread to the mail
+  list, including repeated visits and other-window displays.
+- Show saving in the header only while a download runs. Report start and final
+  results in the echo area.
 - Ignore callbacks delivered during cancellation of a superseded request.
 - Deduplicate first-page rows as well as appended results.
 - Restrict thread metadata styling to the preamble.

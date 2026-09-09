@@ -10,9 +10,9 @@
 
 ;;; Commentary:
 
-;; Exact, read-only command builders and the asynchronous process boundary for
-;; the HEY reader.  This library has no generic public command runner: only the
-;; named operations at the end of this file start a subprocess.
+;; Build closed HEY commands and run them asynchronously.  Only named
+;; operations may start a subprocess.  Attachment saving writes a local file;
+;; no operation changes mailbox state.
 
 ;;; Code:
 
@@ -66,8 +66,14 @@ or a directory below an ancestor containing `.hey/config.json'."
   :type 'integer
   :group 'hey)
 
-(defconst hey-cli-minimum-version "1.4.0"
-  "Oldest official HEY CLI version supported by this package.")
+(defcustom hey-attachment-save-timeout-seconds 120
+  "Seconds before an attachment download is terminated."
+  :type 'number
+  :group 'hey)
+
+(defconst hey-cli-minimum-version "1.4.3"
+  "Oldest supported HEY CLI version.
+Attachment discovery and download isolation require version 1.4.3.")
 
 (defconst hey-cli--official-origin "https://app.hey.com"
   "The only server origin admitted in generated argv.")
@@ -94,13 +100,14 @@ or a directory below an ancestor containing `.hey/config.json'."
   operation
   started-at
   bytes
+  finalizer
   completed
   canceled
   timed-out
   output-too-large)
 
 (defun hey-cli--data-string (value description)
-  "Return VALUE after validating it as a DESCRIPTION data string."
+  "Validate data string VALUE, using DESCRIPTION in errors."
   (unless (and (stringp value)
                (not (string-empty-p value))
                (not (string-match-p "[\0-\x1f\x7f]" value)))
@@ -206,6 +213,25 @@ always positional data."
            (list "thread" "read"
                  (hey-cli--positional-string topic-id "Topic ID")
                  "--allow-partial"))))
+
+(defun hey-cli-build-attachment-list (account-id topic-id)
+  "Build argv for listing attachments in ACCOUNT-ID and TOPIC-ID."
+  (hey-cli--finish-argv
+   (append (hey-cli--account-argv account-id)
+           (list "attachment" "list"
+                 (hey-cli--positional-string topic-id "Topic ID")
+                 "--allow-partial"))))
+
+(defun hey-cli-build-attachment-save (account-id attachment-id path)
+  "Build argv for saving ATTACHMENT-ID in ACCOUNT-ID to local PATH."
+  (unless (and (stringp path) (file-name-absolute-p path)
+               (not (file-remote-p path)))
+    (user-error "Attachment destination must be an absolute local path"))
+  (hey-cli--finish-argv
+   (append (hey-cli--account-argv account-id)
+           (list "attachment" "save"
+                 (hey-cli--positional-string attachment-id "Attachment ID")
+                 "--output" (hey-cli--data-string path "Destination")))))
 
 (defun hey-cli-build-label-list (account-id)
   "Build argv for listing labels in ACCOUNT-ID."
@@ -512,7 +538,10 @@ server data."
   (dolist (buffer (list (hey-cli--request-stdout-buffer request)
                         (hey-cli--request-stderr-buffer request)))
     (when (buffer-live-p buffer)
-      (kill-buffer buffer))))
+      (kill-buffer buffer)))
+  (when-let* ((finalizer (hey-cli--request-finalizer request)))
+    (setf (hey-cli--request-finalizer request) nil)
+    (funcall finalizer)))
 
 (defun hey-cli--remove-kill-hook (request)
   "Remove REQUEST's owner-buffer kill hook."
@@ -710,12 +739,13 @@ the operating system may otherwise be naming the working directory."
     hey-cli--start-message))
 
 (defun hey-cli--start-process
-    (operation argv owner source-key generation success failure)
+    (operation argv owner source-key generation success failure &optional finalizer)
   "Start one closed read OPERATION with ARGV for OWNER.
 
 SOURCE-KEY and GENERATION are retained with the request so the UI can pair the
 returned request with its immutable session state.  SUCCESS receives a parsed
-success envelope.  FAILURE receives a `hey-error'."
+success envelope.  FAILURE receives a `hey-error'.  FINALIZER releases local
+resources after the process stops, even when callbacks cannot run."
   (cond
    ((not (buffer-live-p owner)) nil)
    ((not (hey-cli--owner-default-directory-local-p owner))
@@ -738,6 +768,7 @@ success envelope.  FAILURE receives a `hey-error'."
                          :generation generation
                          :success success
                          :failure failure
+                         :finalizer finalizer
                          :operation operation
                          :started-at (float-time)
                          :bytes 0))
@@ -805,6 +836,40 @@ success envelope.  FAILURE receives a `hey-error'."
        nil)))))
 
 ;;; Named asynchronous operations
+
+;; Each operation takes OWNER, SOURCE-KEY, GENERATION, SUCCESS, and FAILURE
+;; after its operation-specific arguments.  SUCCESS receives a parsed JSON
+;; envelope; FAILURE receives a `hey-error'.  The UI normalizes the result
+;; and checks source/generation before committing it.
+
+(defun hey-cli-attachment-list
+    (account-id topic-id owner source-key generation success failure)
+  "List attachments in ACCOUNT-ID and TOPIC-ID for OWNER.
+Use SOURCE-KEY and GENERATION to pair SUCCESS or FAILURE with the request."
+  (hey-cli--start-process
+   'attachment-list (hey-cli-build-attachment-list account-id topic-id)
+   owner source-key generation success failure))
+
+(defun hey-cli-attachment-save
+    (account-id attachment-id path owner source-key generation success failure
+                &optional finalizer)
+  "Save ATTACHMENT-ID in ACCOUNT-ID to PATH for OWNER.
+Pair SUCCESS or FAILURE with SOURCE-KEY and GENERATION.  Run FINALIZER once
+after the process stops, including failed setup and owner death."
+  (let ((hey-timeout-seconds hey-attachment-save-timeout-seconds)
+        finalized request)
+    (let ((finish (lambda ()
+                    (unless finalized
+                      (setq finalized t)
+                      (when finalizer (funcall finalizer))))))
+      (unwind-protect
+          (setq request
+                (hey-cli--start-process
+                 'attachment-save
+                 (hey-cli-build-attachment-save account-id attachment-id path)
+                 owner source-key generation success failure finish))
+        (unless request (funcall finish)))
+      request)))
 
 (defun hey-cli-version (owner source-key generation success failure)
   "Read HEY version for OWNER, tagged SOURCE-KEY and GENERATION.

@@ -8,6 +8,36 @@
 
 (require 'ert)
 (require 'hey-demo)
+(require 'hey-test-helper)
+
+(ert-deftest hey-demo-attachments-never-reach-cli-or-save-files ()
+  (save-window-excursion
+    (cl-letf (((symbol-function 'hey-cli-attachment-list)
+               (lambda (&rest _) (ert-fail "Demo reached attachment CLI")))
+              ((symbol-function 'hey-cli-attachment-save)
+               (lambda (&rest _) (ert-fail "Demo reached save CLI"))))
+      (unwind-protect
+          (progn
+            (hey-demo)
+            (hey-test-await (lambda () (not hey--loading)))
+            (goto-char (point-min))
+            (while (not (tabulated-list-get-id)) (forward-line 1))
+            (hey-open)
+            (hey-test-await (lambda () hey--thread))
+            (hey-list-attachments)
+            (hey-test-await (lambda () (not hey--loading)))
+            (should (= 1 (length hey--attachments)))
+            (let ((directory (make-temp-file "hey-demo-attachment-" t)))
+              (unwind-protect
+                  (let ((destination (expand-file-name "example.txt" directory)))
+                    (hey--start-attachment-save (car hey--attachments) destination)
+                    (should-not hey--attachment-save-token)
+                    (should-not (file-exists-p destination))
+                    (should (equal (directory-files directory nil "[^.]") nil)))
+                (delete-directory directory t))))
+        (dolist (buffer (buffer-list))
+          (when (string-prefix-p "*HEY" (buffer-name buffer))
+            (kill-buffer buffer)))))))
 
 (ert-deftest hey-demo-bundle-expands-to-readable-thread-rows ()
   (let (envelope)

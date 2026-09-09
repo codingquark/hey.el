@@ -16,7 +16,7 @@
 (defun hey-demo--version (_owner _key _generation success _failure)
   "Fake the named version read and call SUCCESS."
   (hey-demo--deliver
-   success '(("ok" . t) ("data" ("version" . "1.4.0")
+   success '(("ok" . t) ("data" ("version" . "1.4.3")
                                 ("source" . "synthetic demo")))))
 
 (defun hey-demo--accounts (_owner _key _generation success _failure)
@@ -146,6 +146,23 @@ Delegate with KEY and GENERATION, delivering to SUCCESS or FAILURE."
        ("body_state" . "hydrated")))
      ("notice" . "Synthetic partial-read notice"))))
 
+(defun hey-demo--attachments (_account _topic _owner _key _generation success _failure)
+  "Deliver synthetic attachment metadata to SUCCESS."
+  (hey-demo--deliver
+   success '(("ok" . t)
+             ("data" (("id" . "801:1") ("message_id" . 801)
+                      ("filename" . "floor-plan.txt")
+                      ("content_type" . "text/plain") ("byte_size" . 22))))))
+
+(defun hey-demo--save-attachment
+    (_account _id _path _owner _key _generation _success failure &optional finalizer)
+  "Report a synthetic save refusal through FAILURE and run FINALIZER."
+  (unwind-protect
+      (funcall failure (make-hey-error :category 'demo
+                                      :message "The demo does not download files."))
+    (when finalizer (funcall finalizer)))
+  nil)
+
 ;;;###autoload
 (defun hey-demo ()
   "Open the complete HEY reader with an asynchronous synthetic backend."
@@ -162,6 +179,8 @@ Delegate with KEY and GENERATION, delivering to SUCCESS or FAILURE."
               (hey-cli-bundle-view . hey-demo--bundle)
               (hey-cli-search . hey-demo--search)
               (hey-cli-thread-read . hey-demo--thread)
+              (hey-cli-attachment-list . hey-demo--attachments)
+              (hey-cli-attachment-save . hey-demo--save-attachment)
               (hey-cli-label-list . hey-demo--labels)
               (hey-cli-label-view . hey-demo--postings)
               (hey-cli-collection-list . hey-demo--collections)

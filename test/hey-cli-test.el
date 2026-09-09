@@ -97,7 +97,7 @@
                      "move" "bubble" "trash" "spam" "ignore" "share"
                      "unshare" "approve" "deny" "add" "create" "update"
                      "delete" "remove" "send")))
-    (should (= (length builders) 13))
+    (should (= (length builders) 15))
     (dolist (builder builders)
       (let ((name (symbol-name builder)))
         (dolist (verb forbidden)
@@ -587,7 +587,7 @@ the retry instruction."
         (hey-cli-test--stub-discovery nil
           (hey-cli-test--assert-failure
            (hey-cli-test--fail-version owner)
-           '("not found in `exec-path'" "1.4.0 or newer" "restart Emacs"
+           '("not found in `exec-path'" "1.4.3 or newer" "restart Emacs"
              "`hey-executable'"))
           (should (equal hey-cli-test--discovered '("hey"))))
       (when (buffer-live-p owner) (kill-buffer owner))

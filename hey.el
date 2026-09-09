@@ -12,10 +12,9 @@
 
 ;;; Commentary:
 
-;; An Emacs-native, read-only interface to the official HEY command-line
-;; client.  Lists and threads are fetched asynchronously through the closed
-;; operations in `hey-cli.el'.  This library deliberately exposes no mailbox
-;; mutation commands.
+;; Read HEY mail through the official CLI.  Browse sources, search, read
+;; threads, and save attachments with `hey'.  Requests run asynchronously;
+;; the package exposes no mailbox mutation commands.
 
 ;;; Code:
 
@@ -167,6 +166,7 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
     (define-key map (kbd "SPC") #'scroll-up-command)
     (define-key map (kbd "DEL") #'scroll-down-command)
     (define-key map (kbd "RET") #'hey-follow-link)
+    (define-key map (kbd "A") #'hey-list-attachments)
     ;; Keep Markdown table and folding commands unavailable.
     (define-key map (kbd "TAB") #'ignore)
     (define-key map (kbd "<backtab>") #'ignore)
@@ -191,6 +191,15 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
 (defvar-local hey--thread-key nil)
 (defvar-local hey--origin nil)
 (defvar-local hey--operation-overrides nil)
+
+(defvar-local hey--attachments nil)
+(defvar-local hey--attachment-thread nil)
+(defvar-local hey--attachment-origin nil)
+(defvar-local hey--attachment-notice nil)
+(defvar-local hey--attachment-directory nil)
+(defvar-local hey--attachment-save-request nil)
+(defvar-local hey--attachment-save-token nil)
+(defvar-local hey--attachment-save-status nil)
 
 (defvar hey--main-buffer nil
   "Live primary HEY list buffer; `hey' reuses it across renamings.")
@@ -1402,6 +1411,334 @@ face."
 (set-keymap-parent hey-thread-mode-map hey-common-map)
 
 (add-hook 'window-size-change-functions #'hey--window-size-change)
+
+;;; Attachments
+
+(defun hey--attachment-header ()
+  "Return the attachment view's account, count, and operation state."
+  (hey--header-join
+   (list
+    (hey--header-element
+     (and (hey-thread-p hey--attachment-thread)
+          (hey-thread-account-name hey--attachment-thread)) 'hey-header-account-face)
+    (hey--header-element "Attachments" 'hey-header-source-face)
+    (hey--header-element (format "%d shown" (length hey--attachments))
+                         'hey-header-count-face)
+    (cond (hey--error
+           (hey--header-element (hey-error-message hey--error) 'hey-header-error-face))
+          (hey--loading (hey--header-element "Loading…" 'hey-header-status-face))
+          (hey--stale (hey--header-element "Stale" 'hey-header-warning-face)))
+    (hey--header-element hey--attachment-save-status 'hey-header-status-face))))
+
+(defun hey--attachment-message (attachment)
+  "Return the known sender and date for ATTACHMENT, or its message ID."
+  (let ((entry (cl-find (hey-attachment-message-id attachment)
+                        (hey-thread-entries hey--attachment-thread)
+                        :key #'hey-entry-id :test #'equal)))
+    (if entry
+        (string-join (delq nil (list (hey-entry-sender entry)
+                                     (hey-entry-timestamp entry))) " ")
+      (hey-attachment-message-id attachment))))
+
+(defun hey--attachment-row (attachment)
+  "Return a table row for normalized ATTACHMENT."
+  (let* ((size (hey-attachment-byte-size attachment))
+         (filename (hey-attachment-filename attachment))
+         (message (hey--attachment-message attachment)))
+    (list (hey-attachment-id attachment)
+          (vector (propertize (if (string-empty-p filename) "(unnamed)" filename)
+                              'help-echo filename)
+                  (hey-attachment-content-type attachment)
+                  (propertize (if size (file-size-human-readable size) "?")
+                              'hey-byte-size (or size -1))
+                  (propertize message 'help-echo message)))))
+
+(defun hey--attachment-size-less-p (left right)
+  "Return whether attachment row LEFT has fewer bytes than RIGHT."
+  (< (get-text-property 0 'hey-byte-size (aref (cadr left) 2))
+     (get-text-property 0 'hey-byte-size (aref (cadr right) 2))))
+
+(defun hey--render-attachments ()
+  "Render attachments while retaining the selected identity."
+  (let ((id (tabulated-list-get-id))
+        (inhibit-read-only t))
+    (setq tabulated-list-entries (mapcar #'hey--attachment-row hey--attachments))
+    (tabulated-list-print t)
+    (save-excursion
+      (goto-char (point-max))
+      (when (and (not hey--loading) (not hey--error) (not hey--attachments))
+        (insert "\nNo attachments found.\n"))
+      (when hey--error
+        (insert "\n" (hey-error-message hey--error) " Press g to retry.\n"))
+      (dolist (notice (append (when hey--attachment-notice
+                                (list hey--attachment-notice))
+                              hey--warnings))
+        (insert "\n" (propertize notice 'face 'hey-warning-face) "\n")))
+    (when id
+      (goto-char (point-min))
+      (while (and (not (eobp)) (not (equal id (tabulated-list-get-id))))
+        (forward-line 1))
+      (when (eobp) (goto-char (point-min))))
+    (force-mode-line-update)))
+
+(defun hey--attachment-current-p (buffer key generation)
+  "Return whether BUFFER still accepts attachment KEY and GENERATION."
+  (and (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (and (derived-mode-p 'hey-attachment-mode)
+              (= generation hey--generation)
+              (hey-thread-p hey--attachment-thread)
+              (equal key (list (hey-thread-account-id hey--attachment-thread)
+                               (hey-thread-topic-id hey--attachment-thread)))))))
+
+(defun hey-refresh-attachments ()
+  "Refresh the current thread's attachment list on demand."
+  (interactive)
+  (unless (derived-mode-p 'hey-attachment-mode)
+    (user-error "Open an attachment list first"))
+  (let* ((buffer (current-buffer))
+         (thread hey--attachment-thread)
+         (key (list (hey-thread-account-id thread) (hey-thread-topic-id thread)))
+         (generation (hey--next-generation)))
+    (setq hey--loading t hey--error nil)
+    (hey--render-attachments)
+    (setq hey--request
+          (hey--call
+           'hey-cli-attachment-list (car key) (cadr key)
+           buffer (cons 'attachments key) generation
+           (lambda (envelope)
+             (when (hey--attachment-current-p buffer key generation)
+               (with-current-buffer buffer
+                 (let ((result (hey-model-normalize-attachments envelope)))
+                   (setq hey--attachments (plist-get result :value)
+                         hey--warnings (plist-get result :warnings)
+                         hey--attachment-notice (plist-get result :notice)
+                         hey--loading nil hey--error nil hey--stale nil
+                         hey--request nil)
+                   (hey--render-attachments)))))
+           (lambda (error)
+             (when (hey--attachment-current-p buffer key generation)
+               (with-current-buffer buffer
+                 (setq hey--loading nil hey--error error hey--request nil
+                       hey--stale (and hey--attachments t))
+                 (hey--render-attachments))))))))
+
+(defun hey-list-attachments ()
+  "Show the current thread's attachments in a separate list."
+  (interactive)
+  (unless (and (derived-mode-p 'hey-thread-mode) (hey-thread-p hey--thread))
+    (user-error "Wait for a readable HEY thread"))
+  (let* ((thread hey--thread)
+         (origin (point-marker))
+         (overrides hey--operation-overrides)
+         (name (format "*HEY attachments %s %s*"
+                       (hey-thread-account-id thread) (hey-thread-topic-id thread)))
+         (existing (get-buffer name))
+         (buffer (get-buffer-create name))
+         (fresh (not (and existing
+                          (with-current-buffer existing
+                            (derived-mode-p 'hey-attachment-mode))))))
+    (with-current-buffer buffer
+      (when fresh (hey-attachment-mode))
+      (when (markerp hey--attachment-origin)
+        (set-marker hey--attachment-origin nil))
+      (setq hey--attachment-thread thread
+            hey--attachment-origin origin
+            hey--operation-overrides overrides)
+      (when fresh (hey-refresh-attachments)))
+    (hey-display-buffer buffer 'same-window)))
+
+(defun hey-quit-attachments ()
+  "Return to the originating thread without canceling downloads."
+  (interactive)
+  (if (and (markerp hey--attachment-origin)
+           (marker-buffer hey--attachment-origin))
+      (let ((origin hey--attachment-origin))
+        ;; Preserve the thread's return path to its originating mail list.
+        (quit-window)
+        (unless (eq (current-buffer) (marker-buffer origin))
+          (hey-display-buffer (marker-buffer origin) 'same-window))
+        (goto-char origin))
+    (quit-window)))
+
+(defun hey--attachment-basename (filename)
+  "Return a portable suggested basename for attachment FILENAME."
+  (let* ((base (file-name-nondirectory
+                (subst-char-in-string ?\\ ?/ filename)))
+         (clean (replace-regexp-in-string "[<>:\"/\\\\|?*]" "_"
+                                          (hey-model-sanitize-metadata base))))
+    (setq clean (string-trim clean "[ .]+" "[ .]+"))
+    (when (string-match-p
+           "\\`\\(?:CON\\|PRN\\|AUX\\|NUL\\|COM[1-9]\\|LPT[1-9]\\)\\(?:\\.\\|\\'\\)"
+           (upcase clean))
+      (setq clean (concat "_" clean)))
+    (if (string-empty-p clean) "attachment" clean)))
+
+(defun hey--attachment-destination (path)
+  "Validate PATH and return its absolute name under a canonical parent."
+  (unless (and (stringp path) (not (file-remote-p path))
+               (not (string-match-p "[\0-\x1f\x7f]" path)))
+    (user-error "Choose a local attachment destination"))
+  (let* ((absolute (expand-file-name path))
+         (parent (file-name-directory absolute)))
+    (when (or (file-exists-p absolute) (file-symlink-p absolute))
+      (user-error "Destination already exists; choose another filename"))
+    (unless (and (file-directory-p parent) (file-writable-p parent))
+      (user-error "Choose an existing writable destination directory"))
+    (expand-file-name (file-name-nondirectory absolute) (file-truename parent))))
+
+(defun hey--publish-attachment (result id staged destination)
+  "Publish RESULT for ID from STAGED to DESTINATION without replacement."
+  (let ((attributes (file-attributes staged 'integer)))
+    (unless (and (hey-saved-attachment-p result)
+                 (equal id (hey-saved-attachment-id result))
+                 (equal staged (hey-saved-attachment-path result))
+                 attributes (null (file-attribute-type attributes))
+                 (= (file-attribute-size attributes)
+                    (hey-saved-attachment-byte-size result)))
+      (error "Attachment download could not be verified")))
+  (when (or (file-exists-p destination) (file-symlink-p destination))
+    (signal 'file-already-exists '("Attachment destination already exists")))
+  (add-name-to-file staged destination nil))
+
+(defun hey--attachment-save-state (buffer token status)
+  "Finish TOKEN's save in BUFFER and report STATUS in the echo area."
+  (when (and (buffer-live-p buffer)
+             (eq token (buffer-local-value 'hey--attachment-save-token buffer)))
+    (with-current-buffer buffer
+      (setq hey--attachment-save-request nil
+            hey--attachment-save-token nil
+            hey--attachment-save-status nil)
+      (force-mode-line-update)
+      (message "%s" status))))
+
+(defun hey--start-attachment-save (attachment destination)
+  "Download ATTACHMENT to validated DESTINATION with private staging."
+  (when hey--attachment-save-token
+    (user-error "An attachment is already downloading; press c to cancel"))
+  (setq destination (hey--attachment-destination destination))
+  (let* ((buffer (current-buffer))
+         (account (hey-thread-account-id hey--attachment-thread))
+         (id (hey-attachment-id attachment))
+         (token (list id destination))
+         (directory (make-temp-file
+                     (expand-file-name ".hey-attachment-"
+                                       (file-name-directory destination)) t))
+         (staged (expand-file-name "download" directory))
+         (finish (lambda ()
+                   (unwind-protect
+                       (condition-case nil
+                           (when (file-directory-p directory)
+                             (delete-directory directory t))
+                         (file-error
+                          (message "Attachment temporary files could not be removed.")))
+                     (hey--attachment-save-state
+                      buffer token "Attachment download did not complete."))))
+         handed-off)
+    (setq hey--attachment-save-token token
+          hey--attachment-save-status "Saving attachment…")
+    (force-mode-line-update)
+    (unwind-protect
+        (progn
+          (message "%s" hey--attachment-save-status)
+          (setq hey--attachment-save-request
+                (hey--call
+                 'hey-cli-attachment-save account id staged
+                 buffer (list 'attachment-save account id) 0
+                 (lambda (envelope)
+                   (when (and (buffer-live-p buffer)
+                              (eq token (buffer-local-value
+                                         'hey--attachment-save-token buffer)))
+                     (condition-case nil
+                         (progn
+                           (hey--publish-attachment
+                            (hey-model-normalize-saved-attachment envelope)
+                            id staged destination)
+                           (hey--attachment-save-state
+                            buffer token "Attachment saved."))
+                       (file-already-exists
+                        (hey--attachment-save-state
+                         buffer token "Destination exists; choose another filename."))
+                       (file-error
+                        (hey--attachment-save-state
+                         buffer token
+                         "Cannot create the file; choose a destination supporting hard links."))
+                       (error
+                        (hey--attachment-save-state
+                         buffer token
+                         "Attachment could not be verified or saved; choose another destination.")))))
+                 (lambda (error)
+                   (hey--attachment-save-state
+                    buffer token
+                    (pcase (hey-error-category error)
+                      ('canceled "Attachment download canceled.")
+                      ('timeout "Attachment download timed out; retry saving.")
+                      (_ "Attachment download failed; retry saving."))))
+                 finish))
+          (setq handed-off t))
+      (unless handed-off
+        (funcall finish)
+        (hey--attachment-save-state buffer token "Attachment download failed.")))))
+
+(defun hey-save-attachment ()
+  "Save the attachment at point to a new local file."
+  (interactive)
+  (unless (derived-mode-p 'hey-attachment-mode)
+    (user-error "Open an attachment list first"))
+  (when hey--attachment-save-token
+    (user-error "An attachment is already downloading; press c to cancel"))
+  (let ((attachment (cl-find (tabulated-list-get-id) hey--attachments
+                             :key #'hey-attachment-id :test #'equal)))
+    (unless attachment (user-error "Choose an attachment row"))
+    (let* ((directory (or hey--attachment-directory
+                          (and (file-directory-p (expand-file-name "~/Downloads/"))
+                               (expand-file-name "~/Downloads/"))
+                          (expand-file-name "~/")))
+           (suggestion (hey--attachment-basename (hey-attachment-filename attachment)))
+           destination)
+      (while (not destination)
+        (let ((chosen (read-file-name "Save attachment as: " directory
+                                      (expand-file-name suggestion directory)
+                                      nil suggestion)))
+          (condition-case error
+              (setq destination (hey--attachment-destination chosen))
+            (user-error (message "%s" (error-message-string error))))))
+      (setq hey--attachment-directory (file-name-directory destination))
+      (hey--start-attachment-save attachment destination))))
+
+(defun hey-cancel-attachment-save ()
+  "Cancel the attachment download owned by the current list."
+  (interactive)
+  (unless hey--attachment-save-request
+    (user-error "No attachment download is running"))
+  (hey-cli-cancel-request hey--attachment-save-request))
+
+(defvar hey-attachment-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "s") #'hey-save-attachment)
+    (define-key map (kbd "RET") #'hey-save-attachment)
+    (define-key map (kbd "c") #'hey-cancel-attachment-save)
+    (define-key map (kbd "g") #'hey-refresh-attachments)
+    (define-key map (kbd "q") #'hey-quit-attachments)
+    (define-key map (kbd "n") #'next-line)
+    (define-key map (kbd "p") #'previous-line)
+    (define-key map (kbd "?") #'describe-mode)
+    map)
+  "Keymap for attachment listing and explicit local saving.")
+
+(define-derived-mode hey-attachment-mode tabulated-list-mode "HEY-Attachments"
+  "List attachments and save selected files without mailbox mutations."
+  (setq-local tabulated-list-format
+              [("Filename" 30 t) ("Type" 22 t)
+               ("Size" 8 hey--attachment-size-less-p) ("Message" 30 t)]
+              tabulated-list-use-header-line nil
+              tabulated-list-sort-key nil
+              header-line-format '(:eval (hey--attachment-header))
+              default-directory temporary-file-directory
+              revert-buffer-function (lambda (&rest _) (hey-refresh-attachments)))
+  (tabulated-list-init-header)
+  (buffer-disable-undo)
+  (hl-line-mode (if hey-highlight-current-row 1 -1)))
 
 (provide 'hey)
 ;;; hey.el ends here

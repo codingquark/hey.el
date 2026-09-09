@@ -493,6 +493,27 @@
              (regexp-quote "Only content \\*safe\\*") markdown))
     (should-not (string-match-p "no body" markdown))))
 
+(ert-deftest hey-model-preserves-cli-1-4-3-image-markdown ()
+  (dolist (body '("[Kitchen remodel](https://example.com/remodel)"
+                  "[floor-plan.pdf](https://example.com/files/floor-plan.pdf)"
+                  "[image](https://example.com/newsletter)"
+                  "![Kitchen photo](https://example.com/kitchen.jpg)"))
+    (let* ((result
+            (hey-model-normalize-thread
+             `(("ok" . t)
+               ("data" (("id" . 803)
+                        ("creator" ("name" . "Alice"))
+                        ("body" . ,body)
+                        ("body_state" . "hydrated"))))
+             '(:account-id "101" :account-name "Personal"
+               :topic-id "77" :subject "Kitchen remodel"
+               :source-title "Imbox")))
+           (thread (plist-get result :value))
+           (entry (car (hey-thread-entries thread))))
+      (should (equal (hey-entry-body entry) body))
+      (should (string-match-p (regexp-quote (concat "\n" body "\n"))
+                              (hey-model-thread-markdown thread))))))
+
 (ert-deftest hey-model-thread-markdown-escapes-scaffold-not-body ()
   (let* ((context (list :account-id "all"
                         :account-name "All Accounts"
