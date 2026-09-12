@@ -1,6 +1,6 @@
 EMACS ?= emacs
 ELPA_DIR ?= $(CURDIR)/test/tmp/elpa
-PACKAGE_FILE ?= $(CURDIR)/dist/hey-0.2.0.tar
+PACKAGE_FILE ?= $(CURDIR)/dist/hey-0.3.0.tar
 
 EMACS_BATCH = HEY_ELPA_DIR="$(ELPA_DIR)" \
 	MARKDOWN_MODE_DIR="$(MARKDOWN_MODE_DIR)" \

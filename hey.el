@@ -5,7 +5,7 @@
 
 ;; Author: Dhavan Vaidya <456712+codingquark@users.noreply.github.com>
 ;; Assisted-by: Codex:gpt-5, gpt-6
-;; Version: 0.2.0
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "28.2") (markdown-mode "2.8"))
 ;; Keywords: mail, comm
 ;; URL: https://github.com/codingquark/hey.el

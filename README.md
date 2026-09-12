@@ -31,9 +31,6 @@ file, replacing `/path/to/hey.el` with the checkout's directory:
 (autoload 'hey "hey" nil t)
 ```
 
-This README describes the development checkout, including unreleased
-attachment support. See the [change log](CHANGELOG.md) for released features.
-
 ## Getting started
 
 Run `M-x hey` to open the Imbox for the account selected in the CLI. Move to
