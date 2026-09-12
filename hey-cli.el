@@ -10,9 +10,9 @@
 
 ;;; Commentary:
 
-;; Exact, read-only command builders and the asynchronous process boundary for
-;; the HEY reader.  This library has no generic public command runner: only the
-;; named operations at the end of this file start a subprocess.
+;; Build closed HEY commands and run them asynchronously.  Only named
+;; operations may start a subprocess.  Attachment saving writes a local file;
+;; no operation changes mailbox state.
 
 ;;; Code:
 
@@ -20,11 +20,6 @@
 (require 'json)
 (require 'subr-x)
 (require 'hey-model)
-
-(defgroup hey nil
-  "Read HEY mail in Emacs through the official CLI."
-  :group 'applications
-  :prefix "hey-")
 
 (defcustom hey-executable nil
   "Absolute path to the official HEY executable.
@@ -66,8 +61,14 @@ or a directory below an ancestor containing `.hey/config.json'."
   :type 'integer
   :group 'hey)
 
-(defconst hey-cli-minimum-version "1.4.0"
-  "Oldest official HEY CLI version supported by this package.")
+(defcustom hey-attachment-save-timeout-seconds 120
+  "Seconds before an attachment download is terminated."
+  :type 'number
+  :group 'hey)
+
+(defconst hey-cli-minimum-version "1.4.3"
+  "Oldest supported HEY CLI version.
+Attachment discovery and download isolation require version 1.4.3.")
 
 (defconst hey-cli--official-origin "https://app.hey.com"
   "The only server origin admitted in generated argv.")
@@ -94,13 +95,14 @@ or a directory below an ancestor containing `.hey/config.json'."
   operation
   started-at
   bytes
+  finalizer
   completed
   canceled
   timed-out
   output-too-large)
 
 (defun hey-cli--data-string (value description)
-  "Return VALUE after validating it as a DESCRIPTION data string."
+  "Validate data string VALUE, using DESCRIPTION in errors."
   (unless (and (stringp value)
                (not (string-empty-p value))
                (not (string-match-p "[\0-\x1f\x7f]" value)))
@@ -109,11 +111,9 @@ or a directory below an ancestor containing `.hey/config.json'."
   value)
 
 (defun hey-cli--positional-string (value description)
-  "Return VALUE after validating it as positional DESCRIPTION data.
-
-Closed builders never allow a server-provided identifier to be reinterpreted
-as a Cobra flag.  Search text is the sole exception because it follows an
-explicit `--' delimiter."
+  "Validate positional VALUE, using DESCRIPTION in errors.
+Reject leading dashes to prevent flag injection.  Search uses a separate
+validator because its query follows `--'."
   (setq value (hey-cli--data-string value description))
   (when (string-prefix-p "-" value)
     (user-error "%s must not begin with a dash" description))
@@ -140,6 +140,8 @@ explicit `--' delimiter."
   (append argv '("--json")))
 
 ;;; Pure closed command builders
+
+;; Omit --limit on cursor reads: a truncated page cannot be resumed safely.
 
 (defun hey-cli-build-version ()
   "Build argv for the HEY version read."
@@ -207,6 +209,25 @@ always positional data."
                  (hey-cli--positional-string topic-id "Topic ID")
                  "--allow-partial"))))
 
+(defun hey-cli-build-attachment-list (account-id topic-id)
+  "Build argv for listing attachments in ACCOUNT-ID and TOPIC-ID."
+  (hey-cli--finish-argv
+   (append (hey-cli--account-argv account-id)
+           (list "attachment" "list"
+                 (hey-cli--positional-string topic-id "Topic ID")
+                 "--allow-partial"))))
+
+(defun hey-cli-build-attachment-save (account-id attachment-id path)
+  "Build argv for saving ATTACHMENT-ID in ACCOUNT-ID to local PATH."
+  (unless (and (stringp path) (file-name-absolute-p path)
+               (not (file-remote-p path)))
+    (user-error "Attachment destination must be an absolute local path"))
+  (hey-cli--finish-argv
+   (append (hey-cli--account-argv account-id)
+           (list "attachment" "save"
+                 (hey-cli--positional-string attachment-id "Attachment ID")
+                 "--output" (hey-cli--data-string path "Destination")))))
+
 (defun hey-cli-build-label-list (account-id)
   "Build argv for listing labels in ACCOUNT-ID."
   (hey-cli--finish-argv
@@ -242,8 +263,7 @@ always positional data."
   (let ((process-environment (copy-sequence process-environment)))
     (dolist (name hey-cli--removed-environment-variables)
       (setenv name nil))
-    ;; Deliberately do not remove HEY_NO_KEYRING: it selects the user's stored
-    ;; credential backend rather than injecting credentials or an endpoint.
+    ;; HEY_NO_KEYRING selects the stored credential backend.
     (setenv "HEY_NONINTERACTIVE" "1")
     process-environment))
 
@@ -274,11 +294,9 @@ Git worktrees and repository-local HEY configuration are both excluded."
     ancestors))
 
 (defun hey-cli--verify-working-ancestor (directory)
-  "Reject DIRECTORY unless it is a trusted, non-writable local directory.
-
-Directories owned by the current user or root are trusted.  Group- or
-world-writable directories are rejected, except for root-owned sticky
-directories such as `/tmp'."
+  "Reject DIRECTORY unless its owner and permissions are trusted.
+Require the current user or root as owner.  Reject group/world write access,
+except on root-owned sticky directories such as `/tmp'."
   (when (or (file-remote-p directory) (file-symlink-p directory))
     (error "HEY working directory has an unsafe symlink or remote ancestor"))
   (let* ((attributes (file-attributes directory 'integer))
@@ -369,20 +387,19 @@ and whose cdr lists the components that still need to be created."
         (error "HEY working directory changed during secure preparation"))
       directory)))
 
-;; Executable messages are package-owned prose: they name the option to change
-;; and the action to take, never a candidate path or operating-system error.
+;; Give actionable guidance without exposing paths or operating-system errors.
 
 (define-error
-  'hey-cli-executable-missing
-  (format "HEY CLI was not found in `exec-path'. Install HEY CLI %s or newer \
+ 'hey-cli-executable-missing
+ (format "HEY CLI was not found in `exec-path'. Install HEY CLI %s or newer \
 and restart Emacs, or set `hey-executable'." hey-cli-minimum-version)
-  'error)
+ 'error)
 
 (define-error
-  'hey-cli-executable-configured
-  "Configured `hey-executable' is not a local executable file. Set an absolute \
+ 'hey-cli-executable-configured
+ "Configured `hey-executable' is not a local executable file. Set an absolute \
 path, or nil to search `exec-path'; no fallback is taken."
-  'error)
+ 'error)
 
 (defconst hey-cli--vanished-message
   "The HEY executable became unavailable as the request started. Reinstall it, \
@@ -473,7 +490,7 @@ server data."
    (t value)))
 
 (defun hey-cli--parse-json (string)
-  "Parse STRING into the frozen HEY JSON representation."
+  "Parse JSON STRING with string keys, list arrays, and explicit false."
   (hey-cli--json-to-alists
    (json-parse-string string
                       :object-type 'hash-table
@@ -501,7 +518,7 @@ server data."
   (alist-get status '((1 . usage) (2 . not-found) (3 . auth)
                       (4 . forbidden) (5 . rate-limit) (6 . network)
                       (7 . api) (8 . ambiguous))
-            'cli-exit))
+             'cli-exit))
 
 (defun hey-cli--delete-request-buffers (request)
   "Delete REQUEST's private processes and capture buffers."
@@ -512,7 +529,10 @@ server data."
   (dolist (buffer (list (hey-cli--request-stdout-buffer request)
                         (hey-cli--request-stderr-buffer request)))
     (when (buffer-live-p buffer)
-      (kill-buffer buffer))))
+      (kill-buffer buffer)))
+  (when-let* ((finalizer (hey-cli--request-finalizer request)))
+    (setf (hey-cli--request-finalizer request) nil)
+    (funcall finalizer)))
 
 (defun hey-cli--remove-kill-hook (request)
   "Remove REQUEST's owner-buffer kill hook."
@@ -545,15 +565,12 @@ CATEGORY and EXIT-STATUS are used only for redacted diagnostics."
               (error
                (hey-cli--log (hey-cli--request-operation request) exit-status
                              'callback-error 0 nil)))))
-      ;; Callback `quit', `throw', and other nonlocal exits must never retain
-      ;; raw stdout or stderr in the private capture buffers.
+      ;; Release captured output even when a callback exits nonlocally.
       (hey-cli--delete-request-buffers request))))
 
 (defun hey-cli--abort-request-setup (request process stderr-process)
   "Clean up REQUEST after setup aborts using PROCESS and STDERR-PROCESS."
-  ;; Mark completion before deleting either process: deletion can run the
-  ;; sentinel synchronously, and an incompletely installed request must not
-  ;; call application callbacks.
+  ;; Process deletion can run the sentinel; suppress callbacks during setup.
   (setf (hey-cli--request-completed request) t)
   (when (processp process)
     (setf (hey-cli--request-process request) process))
@@ -710,12 +727,13 @@ the operating system may otherwise be naming the working directory."
     hey-cli--start-message))
 
 (defun hey-cli--start-process
-    (operation argv owner source-key generation success failure)
+    (operation argv owner source-key generation success failure &optional finalizer)
   "Start one closed read OPERATION with ARGV for OWNER.
 
 SOURCE-KEY and GENERATION are retained with the request so the UI can pair the
 returned request with its immutable session state.  SUCCESS receives a parsed
-success envelope.  FAILURE receives a `hey-error'."
+success envelope.  FAILURE receives a `hey-error'.  FINALIZER releases local
+resources after the process stops, even when callbacks cannot run."
   (cond
    ((not (buffer-live-p owner)) nil)
    ((not (hey-cli--owner-default-directory-local-p owner))
@@ -738,6 +756,7 @@ success envelope.  FAILURE receives a `hey-error'."
                          :generation generation
                          :success success
                          :failure failure
+                         :finalizer finalizer
                          :operation operation
                          :started-at (float-time)
                          :bytes 0))
@@ -772,9 +791,7 @@ success envelope.  FAILURE receives a `hey-error'."
                     (setf (hey-cli--request-process request) process)
                     (setq kill-hook
                           (lambda ()
-                            ;; A process sentinel can run before `kill-buffer'
-                            ;; finishes.  Clear the owner first so that completion
-                            ;; still cannot call into a dying buffer.
+                            ;; Suppress callbacks before deletion runs the sentinel.
                             (setf (hey-cli--request-owner request) nil)
                             (hey-cli-cancel-request request)))
                     (setf (hey-cli--request-kill-hook request) kill-hook)
@@ -791,8 +808,7 @@ success envelope.  FAILURE receives a `hey-error'."
                   operation owner failure
                   (hey-cli--start-failure-message err executable))
                  nil))
-            ;; Also covers `quit' and a caller's nonlocal exit while setup is
-            ;; in progress; neither can leave the just-created CLI orphaned.
+            ;; Nonlocal exits during setup must also terminate the process.
             (unless setup-complete
               (hey-cli--abort-request-setup request process stderr-process))))
       ((hey-cli-executable-missing hey-cli-executable-configured)
@@ -805,6 +821,40 @@ success envelope.  FAILURE receives a `hey-error'."
        nil)))))
 
 ;;; Named asynchronous operations
+
+;; Each operation takes OWNER, SOURCE-KEY, GENERATION, SUCCESS, and FAILURE
+;; after its operation-specific arguments.  SUCCESS receives a parsed JSON
+;; envelope; FAILURE receives a `hey-error'.  The UI normalizes the result
+;; and checks source/generation before committing it.
+
+(defun hey-cli-attachment-list
+    (account-id topic-id owner source-key generation success failure)
+  "List attachments in ACCOUNT-ID and TOPIC-ID for OWNER.
+Use SOURCE-KEY and GENERATION to pair SUCCESS or FAILURE with the request."
+  (hey-cli--start-process
+   'attachment-list (hey-cli-build-attachment-list account-id topic-id)
+   owner source-key generation success failure))
+
+(defun hey-cli-attachment-save
+    (account-id attachment-id path owner source-key generation success failure
+                &optional finalizer)
+  "Save ATTACHMENT-ID in ACCOUNT-ID to PATH for OWNER.
+Pair SUCCESS or FAILURE with SOURCE-KEY and GENERATION.  Run FINALIZER once
+after the process stops, including failed setup and owner death."
+  (let ((hey-timeout-seconds hey-attachment-save-timeout-seconds)
+        finalized request)
+    (let ((finish (lambda ()
+                    (unless finalized
+                      (setq finalized t)
+                      (when finalizer (funcall finalizer))))))
+      (unwind-protect
+          (setq request
+                (hey-cli--start-process
+                 'attachment-save
+                 (hey-cli-build-attachment-save account-id attachment-id path)
+                 owner source-key generation success failure finish))
+        (unless request (funcall finish)))
+      request)))
 
 (defun hey-cli-version (owner source-key generation success failure)
   "Read HEY version for OWNER, tagged SOURCE-KEY and GENERATION.
@@ -855,9 +905,8 @@ PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
 
 (defun hey-cli-contact-threads
     (account-id contact-id page owner source-key generation success failure)
-  "Read CONTACT-ID threads in ACCOUNT-ID for OWNER, tagged by request state.
-
-PAGE may be nil.  Deliver the result through SUCCESS or FAILURE."
+  "Read CONTACT-ID threads in ACCOUNT-ID for OWNER at optional PAGE.
+Tag SUCCESS or FAILURE with SOURCE-KEY and GENERATION."
   (hey-cli--start-process
    'contact-threads
    (hey-cli-build-contact-threads account-id contact-id page)

@@ -10,9 +10,8 @@
 
 ;;; Commentary:
 
-;; This file is the pure boundary between string-keyed HEY CLI JSON and the
-;; package UI.  It performs no I/O and discards envelope fields the reader
-;; does not need.
+;; Normalize HEY CLI JSON into records and format them for display.
+;; This library performs no I/O and retains only fields the reader needs.
 
 ;;; Code:
 
@@ -98,6 +97,14 @@ sources such as search which do not."
   "A transport or CLI error safe for presentation by the UI."
   category message code hint exit-status)
 
+(cl-defstruct hey-attachment
+  "One downloadable file with an opaque CLI identity."
+  id message-id filename content-type byte-size)
+
+(cl-defstruct hey-saved-attachment
+  "A CLI download result whose path is data, never an instruction."
+  id path byte-size)
+
 (defun hey-model--get (key object)
   "Return the value for string KEY in alist OBJECT."
   (and (hey-model--object-p object) (cdr (assoc-string key object))))
@@ -124,9 +131,7 @@ about individual records without discarding otherwise valid neighbors."
   "Return VALUE as sanitized metadata, or an empty string."
   (if (stringp value) (hey-model-sanitize-metadata value) ""))
 
-;; String identifiers are never rewritten: a value which sanitization or
-;; trimming would change is rejected, so two hostile identifiers cannot
-;; collapse onto one composite identity.
+;; Reject changed identifiers so distinct values cannot collapse to one key.
 (defun hey-model--id-string (value)
   "Return clean, exact identifier VALUE as a string, or nil.
 
@@ -273,10 +278,7 @@ holding non-fatal shape warnings."
 
 (defun hey-model-normalize-auth-status (envelope)
   "Normalize authentication-status ENVELOPE without retaining device data.
-
-Return `:value' as a `hey-auth-status' and `:warnings' for absent or unsafe
-fields.  Installation identifiers and all other authentication metadata are
-discarded at this boundary."
+Return `:value' as a `hey-auth-status' and `:warnings' for invalid fields."
   (let* ((data (hey-model--get "data" envelope))
          (raw-authenticated (and (hey-model--object-p data)
                                  (hey-model--get "authenticated" data)))
@@ -299,11 +301,8 @@ discarded at this boundary."
           :warnings (nreverse warnings))))
 
 (defun hey-model-normalize-version (envelope)
-  "Normalize version ENVELOPE without retaining build provenance details.
-
-Return `:value' as a `hey-version' and `:warnings' for absent or unsafe
-fields.  Commit, build date, and Go toolchain fields are deliberately
-discarded because the UI only needs the CLI version and its broad source."
+  "Normalize version ENVELOPE into a `hey-version' and warnings.
+Return `:value' and `:warnings'; discard commit, build date, and toolchain."
   (let* ((data (hey-model--get "data" envelope))
          (version (and (hey-model--object-p data)
                        (hey-model--opaque-string
@@ -377,7 +376,7 @@ Return a plist with `:value' and `:warnings'."
                  for index from 0
                  for numeric-id = (hey-model--id-string (hey-model--get "id" raw))
                  for box-kind = (hey-model--command-target-string
-                                  (hey-model--get "kind" raw))
+                                 (hey-model--get "kind" raw))
                  for source-id = (or box-kind numeric-id)
                  if (not source-id)
                  do (push (hey-model--warning "box" index "missing command id and kind") warnings)
@@ -526,10 +525,8 @@ Return a plist with `:value' and `:warnings'."
          :original-index index)))))
 
 (defun hey-model--source-with-continuation (source envelope records warnings)
-  "Return a copied SOURCE updated from ENVELOPE, RECORDS, and WARNINGS.
-
-The return value is a cons of the copied source and possibly extended warning
-list.  SOURCE itself is never mutated."
+  "Update a copy of SOURCE using ENVELOPE, RECORDS, and WARNINGS.
+Return the copied source paired with the updated warning list."
   (let* ((copy (copy-hey-source source))
          (search-p (hey-model--known-kind-p (hey-source-kind source) 'search))
          (old (hey-source-continuation source))
@@ -575,16 +572,14 @@ list.  SOURCE itself is never mutated."
     (cons copy warnings)))
 
 (defun hey-model-normalize-postings (envelope source)
-  "Normalize a source-specific posting ENVELOPE for SOURCE.
+  "Normalize posting ENVELOPE for SOURCE.
+Search reads `data', keys rows by account/topic ID, and leaves read state
+and memberships unknown.  Other sources read `data.postings' and key rows
+by account/posting ID.  Keep the literal `all' account in row keys because
+the CLI does not reliably identify each row's originating account.
 
-Search consumes the envelope's data array, requires `topic_id', derives its
-row metadata from the first matching message, and leaves seen/membership data
-unknown.  Other sources consume `data.postings', require a posting `id', and
-retain posting-level metadata.  Exact row keys are `(account-id posting-id)'
-or `(account-id topic-id)' respectively.
-
-Return `:value' records, `:source' as an updated copy with continuation state,
-and `:warnings'.  SOURCE is not mutated."
+Return `:value' records, `:source' as a copy with updated continuation,
+and `:warnings'.  Preserve SOURCE."
   (let* ((search-p (hey-model--known-kind-p (hey-source-kind source) 'search))
          (data (hey-model--get "data" envelope))
          (raw-records (if search-p data (hey-model--get "postings" data)))
@@ -618,6 +613,47 @@ and `:warnings'.  SOURCE is not mutated."
   "Return sanitized, single-line notice text from ENVELOPE, or nil."
   (let ((notice (hey-model--clean-string (hey-model--get "notice" envelope))))
     (unless (string-empty-p notice) notice)))
+
+(defun hey-model--attachment-id (value)
+  "Return opaque attachment identity VALUE when safe as CLI data."
+  (and (stringp value)
+       (not (string-empty-p value))
+       (not (string-prefix-p "-" value))
+       (not (string-match-p "[\0-\x20\x7f]" value))
+       (equal value (hey-model-sanitize-metadata value))
+       value))
+
+(defun hey-model-normalize-attachments (envelope)
+  "Normalize attachment ENVELOPE into records, warnings, and a notice."
+  (let ((data (hey-model--array-data envelope)) records warnings ids)
+    (if (eq data 'malformed)
+        (push "Attachment response does not contain a list." warnings)
+      (dolist (raw data)
+        (let ((id (hey-model--attachment-id (hey-model--get "id" raw)))
+              (message-id (hey-model--id-string (hey-model--get "message_id" raw)))
+              (size (hey-model--get "byte_size" raw)))
+          (if (or (not id) (not message-id) (member id ids))
+              (push "An attachment with an invalid or duplicate identity was skipped."
+                    warnings)
+            (push id ids)
+            (push (make-hey-attachment
+                   :id id :message-id message-id
+                   :filename (hey-model--clean-string (hey-model--get "filename" raw))
+                   :content-type (hey-model--clean-string
+                                  (hey-model--get "content_type" raw))
+                   :byte-size (and (integerp size) (>= size 0) size))
+                  records)))))
+    (list :value (nreverse records) :warnings (nreverse warnings)
+          :notice (hey-model-envelope-notice envelope))))
+
+(defun hey-model-normalize-saved-attachment (envelope)
+  "Normalize download ENVELOPE, returning nil for an incomplete result."
+  (let* ((data (hey-model--get "data" envelope))
+         (id (hey-model--attachment-id (hey-model--get "id" data)))
+         (path (hey-model--get "path" data))
+         (size (hey-model--get "byte_size" data)))
+    (when (and id (stringp path) (integerp size) (>= size 0))
+      (make-hey-saved-attachment :id id :path path :byte-size size))))
 
 (defun hey-model--body-state (raw)
   "Map known RAW CLI body state strings to bounded symbols."
@@ -657,9 +693,12 @@ and `:warnings'.  SOURCE is not mutated."
 (defun hey-model-normalize-thread (envelope context)
   "Normalize flat thread-entry ENVELOPE using normalized origin CONTEXT.
 
-CONTEXT contains only the keys frozen in docs/interfaces.md.  Entry order is
-preserved exactly; timestamps are never used to reorder messages.  Return a
-plist with `:value' holding one `hey-thread' and non-fatal `:warnings'."
+CONTEXT is a plist with `:account-id', `:account-name', `:topic-id',
+`:subject', `:source-title', `:labels', `:labels-known-p', `:collections',
+and `:collections-known-p'.  Unknown memberships remain distinct from empty
+ones.  Preserve entry order; timestamps never reorder messages.
+
+Return `:value' as one `hey-thread' and non-fatal `:warnings'."
   (let ((data (hey-model--array-data envelope)) entries warnings)
     (if (eq data 'malformed)
         (push "Envelope data is missing or not a thread-entry array." warnings)
@@ -675,7 +714,7 @@ plist with `:value' holding one `hey-thread' and non-fatal `:warnings'."
       (dolist (entry entries)
         (let ((sender (hey-entry-sender entry)))
           (unless (or (string-empty-p sender) (member sender senders))
-            (setq senders (append senders (list sender)))))
+            (push sender senders)))
         (unless app-url (setq app-url (hey-entry-app-url entry))))
       (list
        :value
@@ -685,7 +724,7 @@ plist with `:value' holding one `hey-thread' and non-fatal `:warnings'."
         :topic-id (hey-model--id-string (plist-get context :topic-id))
         :subject (hey-model--clean-string (plist-get context :subject))
         :source-title (hey-model--clean-string (plist-get context :source-title))
-        :senders senders
+        :senders (nreverse senders)
         :labels (hey-model--sanitize-membership-records
                  (plist-get context :labels))
         :labels-known-p (eq (plist-get context :labels-known-p) t)
@@ -838,10 +877,8 @@ The frozen layouts are:
   `narrow'  [subject sender memberships date]
   `minimal' [subject date]
 
-Unseen subjects carry a leading marker and `hey-unseen-face'; only an
-explicit `unseen' state earns that presentation, so `seen' values and the
-`unknown' state of search rows render plainly.  Memberships expose their
-complete values via `help-echo'."
+Only explicit `unseen' subjects get a marker and `hey-unseen-face'.
+Memberships retain their complete values in `help-echo'."
   (let* ((subject (hey-posting-subject posting))
          (subject-cell
           (if (eq (hey-posting-seen posting) 'unseen)
@@ -877,8 +914,7 @@ complete values via `help-echo'."
   "Format preamble LABEL and Markdown-safe VALUE with aligned indentation."
   (format "%-16s%s\n" (concat label ":") (hey-model--markdown-escape value)))
 
-;; `hydrated' means the CLI fetched a body which was itself empty, so this
-;; description only renders when the body string is absent.
+;; A hydrated entry reaches this fallback only when its body is empty.
 (defun hey-model--body-state-description (state)
   "Return a Markdown-safe human description of entry body STATE."
   (pcase state
@@ -888,6 +924,11 @@ complete values via `help-echo'."
     ('failed "body not read: failed")
     ('not-requested "body not requested")
     (_ "body unavailable")))
+
+(defun hey-model--thread-memberships (memberships)
+  "Return comma-separated MEMBERSHIPS, or `none' when empty."
+  (let ((names (hey-model--membership-names memberships)))
+    (if names (string-join names ", ") "none")))
 
 (defun hey-model-thread-markdown (thread)
   "Return the package-owned Markdown scaffold for normalized THREAD.
@@ -907,20 +948,12 @@ define UI entry boundaries."
     (when (hey-thread-labels-known-p thread)
       (push (hey-model--thread-field
              "Labels"
-             (or (and-let* ((names (hey-model--membership-names
-                                    (hey-thread-labels thread)))
-                            ((not (null names))))
-                   (string-join names ", "))
-                 "none"))
+             (hey-model--thread-memberships (hey-thread-labels thread)))
             parts))
     (when (hey-thread-collections-known-p thread)
       (push (hey-model--thread-field
              "Collections"
-             (or (and-let* ((names (hey-model--membership-names
-                                    (hey-thread-collections thread)))
-                            ((not (null names))))
-                   (string-join names ", "))
-                 "none"))
+             (hey-model--thread-memberships (hey-thread-collections thread)))
             parts))
     (when (hey-thread-notice thread)
       (push (hey-model--thread-field "Notice" (hey-thread-notice thread)) parts))
@@ -944,9 +977,7 @@ define UI entry boundaries."
                         (hey-model--body-state-description
                          (hey-entry-body-state entry))))))
              (chunk (concat header content "\n\n---\n")))
-        ;; Text properties are the package-owned structural boundary.  They
-        ;; survive insertion into the thread buffer and cannot be forged by a
-        ;; Markdown heading inside CONTENT.
+        ;; Body headings cannot forge these entry boundaries.
         (add-text-properties 0 (length chunk)
                              (list 'hey-entry-id entry-id) chunk)
         (add-text-properties 0 1 '(hey-entry-start t) chunk)

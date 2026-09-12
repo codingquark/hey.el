@@ -25,8 +25,11 @@
     (hey-cli-label-list . hey-cli-build-label-list)
     (hey-cli-label-view . hey-cli-build-label-view)
     (hey-cli-collection-list . hey-cli-build-collection-list)
-    (hey-cli-collection-view . hey-cli-build-collection-view))
-  "Frozen mapping from named read operations to pure argv builders.")
+    (hey-cli-collection-view . hey-cli-build-collection-view)
+    (hey-cli-attachment-list . hey-cli-build-attachment-list)
+    (hey-cli-attachment-save . hey-cli-build-attachment-save))
+  "Map closed mailbox-read operations to pure argv builders.
+Attachment saving also writes a user-requested local file.")
 
 (defconst hey-build-process-primitives
   '(async-shell-command call-process call-process-region

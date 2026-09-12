@@ -24,7 +24,7 @@
             ("install_id" . "discard-me"))))
 
 (defconst hey-test--version-envelope
-  '(("ok" . t) ("data" ("version" . "1.4.0") ("source" . "release"))))
+  '(("ok" . t) ("data" ("version" . "1.4.3") ("source" . "release"))))
 
 (defun hey-test--posting (id topic subject &optional kind)
   "Return a synthetic posting alist with ID, TOPIC, SUBJECT, and KIND."
@@ -862,31 +862,37 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
       (should (equal (mapcar #'hey-posting-subject hey--records) '("Newest"))))))
 
 (ert-deftest hey-ui-starts-at-explicit-account-imbox-without-auth-prompt ()
-  (save-window-excursion
-    (let ((hey-account "101") calls)
-      (cl-letf (((symbol-function 'hey-cli-version)
-                 (lambda (_owner _key _generation success _failure)
-                   (push 'version calls) (funcall success hey-test--version-envelope)))
-                ((symbol-function 'hey-cli-account-list)
-                 (lambda (_owner _key _generation success _failure)
-                   (push 'accounts calls) (funcall success hey-test--account-envelope)))
-                ((symbol-function 'hey-cli-auth-status)
-                 (lambda (&rest _args) (ert-fail "Explicit account queried auth status")))
-                ((symbol-function 'hey-cli-box-view)
-                 (lambda (account box page _owner _key _generation success _failure)
-                   (push (list account box page) calls)
-                   (funcall success (hey-test--postings-envelope nil)))))
-        (unwind-protect
-            (progn
-              (hey)
-              (with-current-buffer (current-buffer)
-                (should (derived-mode-p 'hey-list-mode))
-                (should (equal (hey-account-id hey--account) "101"))
-                (should (equal (hey-source-id hey--source) "imbox")))
-              (should (member '("101" "imbox" nil) calls)))
-          (dolist (buffer (buffer-list))
-            (when (string-prefix-p "*HEY" (buffer-name buffer))
-              (kill-buffer buffer))))))))
+  (dolist (version '("1.4.3" "1.4.4"))
+    (save-window-excursion
+      (let ((hey-account "101")
+            (hey-test--version-envelope
+             `(("ok" . t)
+               ("data" ("version" . ,version) ("source" . "release"))))
+            calls)
+        (cl-letf (((symbol-function 'hey-cli-version)
+                   (lambda (_owner _key _generation success _failure)
+                     (push 'version calls) (funcall success hey-test--version-envelope)))
+                  ((symbol-function 'hey-cli-account-list)
+                   (lambda (_owner _key _generation success _failure)
+                     (push 'accounts calls) (funcall success hey-test--account-envelope)))
+                  ((symbol-function 'hey-cli-auth-status)
+                   (lambda (&rest _args) (ert-fail "Explicit account queried auth status")))
+                  ((symbol-function 'hey-cli-box-view)
+                   (lambda (account box page _owner _key _generation success _failure)
+                     (push (list account box page) calls)
+                     (funcall success (hey-test--postings-envelope nil)))))
+          (unwind-protect
+              (progn
+                (hey)
+                (with-current-buffer (current-buffer)
+                  (should (derived-mode-p 'hey-list-mode))
+                  (should (equal (hey-account-id hey--account) "101"))
+                  (should (equal (hey-source-id hey--source) "imbox")))
+                (should (equal (reverse calls)
+                               '(version accounts ("101" "imbox" nil)))))
+            (dolist (buffer (buffer-list))
+              (when (string-prefix-p "*HEY" (buffer-name buffer))
+                (kill-buffer buffer)))))))))
 
 (ert-deftest hey-ui-nil-account-resolves-auth-status-before-imbox ()
   (save-window-excursion
@@ -958,25 +964,26 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
               (kill-buffer buffer))))))))
 
 (ert-deftest hey-ui-unsupported-cli-version-becomes-visible-error ()
-  (save-window-excursion
-    (let ((hey-account "101")
-          (old-version
-           '(("ok" . t)
-             ("data" ("version" . "1.3.9") ("source" . "release")))))
-      (cl-letf (((symbol-function 'hey-cli-version)
-                 (lambda (_owner _key _generation success _failure)
-                   (funcall success old-version)))
-                ((symbol-function 'hey-cli-account-list)
-                 (lambda (&rest _args)
-                   (ert-fail "Unsupported CLI queried accounts"))))
-        (unwind-protect
-            (progn
-              (hey)
-              (should-not hey--loading)
-              (should (string-match-p "1.4.0 or newer" (buffer-string))))
-          (dolist (buffer (buffer-list))
-            (when (string-prefix-p "*HEY" (buffer-name buffer))
-              (kill-buffer buffer))))))))
+  (dolist (version '("1.4.0" "1.4.1" "1.4.2"))
+    (save-window-excursion
+      (let ((hey-account "101")
+            (old-version
+             `(("ok" . t)
+               ("data" ("version" . ,version) ("source" . "release")))))
+        (cl-letf (((symbol-function 'hey-cli-version)
+                   (lambda (_owner _key _generation success _failure)
+                     (funcall success old-version)))
+                  ((symbol-function 'hey-cli-account-list)
+                   (lambda (&rest _args)
+                     (ert-fail "Unsupported CLI queried accounts"))))
+          (unwind-protect
+              (progn
+                (hey)
+                (should-not hey--loading)
+                (should (string-match-p "1.4.3 or newer" (buffer-string))))
+            (dolist (buffer (buffer-list))
+              (when (string-prefix-p "*HEY" (buffer-name buffer))
+                (kill-buffer buffer)))))))))
 
 (ert-deftest hey-ui-missing-executable-remediation-appears-once ()
   "The list shows transport guidance verbatim and one retry instruction."
@@ -1296,6 +1303,64 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
       (cl-letf (((symbol-function 'markdown-link-url)
                  (lambda () "file:///tmp/private")))
         (should-error (hey-follow-link) :type 'user-error)))))
+
+(ert-deftest hey-ui-cancellation-invalidates-callback-before-delivery ()
+  "Keep synchronous cancellation callbacks out of the next refresh."
+  (hey-test-with-list
+    (let ((renders 0) failure)
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_account _box _page _owner _key _generation _success fail)
+                    (setq failure fail)
+                    'pending))))
+      (hey-refresh)
+      (cl-letf (((symbol-function 'hey-cli-cancel-request)
+                 (lambda (_request)
+                   (funcall failure (make-hey-error :category 'canceled
+                                                   :message "Canceled"))))
+                ((symbol-function 'hey--render-list)
+                 (lambda (&rest _) (cl-incf renders))))
+        (hey-refresh))
+      (should (= renders 1))
+      (should hey--loading)
+      (should-not hey--error))))
+
+(ert-deftest hey-ui-refresh-deduplicates-first-page ()
+  "Keep one row per identity on initial load and refresh."
+  (hey-test-with-list
+    (setq hey--operation-overrides
+          `((hey-cli-box-view
+             . ,(lambda (_account _box _page _owner _key _generation success _failure)
+                  (funcall success
+                           (hey-test--postings-envelope
+                            (list (hey-test--posting 501 901 "First")
+                                  (hey-test--posting 501 901 "Duplicate")
+                                  (hey-test--posting 502 902 "Second"))))
+                  nil))))
+    (dotimes (_ 2)
+      (hey-refresh)
+      (should (equal (mapcar #'hey-posting-subject hey--records)
+                     '("First" "Second"))))))
+
+(ert-deftest hey-ui-preamble-faces-do-not-style-message-bodies ()
+  "Apply metadata faces only to the generated thread preamble."
+  (with-temp-buffer
+    (hey-thread-mode)
+    (let ((envelope (copy-tree (hey-test--thread-envelope))))
+      (setcdr (assoc "body" (car (cdr (assoc "data" envelope))))
+              "Subject: body text\nLabels: ordinary prose")
+      (setq hey--thread
+            (plist-get (hey-model-normalize-thread envelope
+                         '(:account-id "101" :topic-id "901" :subject "Subject"))
+                       :value)))
+    (hey--render-thread)
+    (goto-char (point-min))
+    (should (memq 'hey-metadata-label-face (get-text-property (point) 'face)))
+    (dolist (text '("Subject: body text" "Labels: ordinary prose"))
+      (search-forward text)
+      (let ((face (get-text-property (- (point) (length text)) 'face)))
+        (should-not (if (listp face) (memq 'hey-metadata-label-face face)
+                      (eq face 'hey-metadata-label-face)))))))
 
 (provide 'hey-test)
 ;;; hey-test.el ends here

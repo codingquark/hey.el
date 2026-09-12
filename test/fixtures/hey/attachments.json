@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "data": [
+    {"id": "801:1", "message_id": 801, "filename": "floor-plan.pdf", "content_type": "application/pdf", "byte_size": 22},
+    {"id": "802:e-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "message_id": 802, "filename": "floor-plan.pdf", "content_type": "application/pdf", "byte_size": null},
+    {"id": "803:1", "message_id": 803, "filename": "empty.txt", "content_type": "text/plain", "byte_size": 0}
+  ],
+  "notice": "One message could not be read; some attachments may be missing."
+}

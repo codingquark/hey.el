@@ -1,172 +1,189 @@
-# hey.el
+# hey.el — Read HEY mail in Emacs
 
-`hey.el` is a read-only Emacs interface to the official HEY CLI.  It browses
-boxes and bundles, searches mail, reads threads, and navigates labels and
-collections without exposing mailbox mutation commands.
+`hey.el` is a read-only interface to [HEY](https://www.hey.com/) through its
+[official CLI](https://github.com/basecamp/hey-cli). Browse boxes, bundles,
+labels, and collections; search mail; read threads; and save attachments.
+Opening a thread leaves its read state unchanged.
 
-The project is maintained at <https://github.com/codingquark/hey.el>.
-
-## Requirements
-
-- Emacs 28.2 or newer
-- `markdown-mode` 2.8 or newer
-- HEY CLI 1.4.0 or newer
-
-Authentication is owned by the HEY CLI.  The package does not accept or store
-bearer tokens.
-
-Box, bundle, contact-thread, label, and collection postings count as seen only
-when the CLI returns literal JSON `true` in their `seen` field; `false`, `null`,
-a missing field, or any other value is unseen.  Search results carry no
-authoritative `seen` field, so they are presented as neither seen nor unseen.
+- Package name: `hey`
+- [Source code and issues](https://github.com/codingquark/hey.el)
+- [Change log](CHANGELOG.md)
 
 ## Installation
 
-Until the MELPA recipe is accepted, install the current release directly from
-the repository with Emacs 29 or newer:
+The package requires Emacs 28.2 or newer, `markdown-mode` 2.8 or newer, and
+HEY CLI 1.4.3 or newer. Install the CLI and sign in using the
+[official instructions](https://help.hey.com/article/1189-using-ai-agents-with-hey).
+Authentication belongs to the CLI; there are no tokens to configure in Emacs.
+
+On Emacs 29 or newer, evaluate:
 
 ```elisp
 (package-vc-install "https://github.com/codingquark/hey.el")
 ```
 
-After the recipe is accepted, refresh MELPA and run `M-x package-install RET
-hey RET` (or use `:ensure t` with `use-package`).
-
-For development, add the checkout to `load-path` and let `use-package`
-discover the autoloaded entry command:
+For Emacs 28.2 or a development checkout, install `markdown-mode` 2.8 or
+newer, clone this repository, and add the following to your initialization
+file, replacing `/path/to/hey.el` with the checkout's directory:
 
 ```elisp
-(add-to-list 'load-path (expand-file-name "/path/to/hey.el"))
-
-(use-package hey
-  :ensure nil
-  :commands hey)
+(add-to-list 'load-path "/path/to/hey.el")
+(autoload 'hey "hey" nil t)
 ```
 
-Run `M-x hey` to open the configured account's Imbox.  The package installs no
-global keybindings.  Startup requires HEY CLI 1.4.0 or newer and presents a
-buffer-local error when authentication, account selection, or the version
-preflight fails.
+This README describes the development checkout, including unreleased
+attachment support. See the [change log](CHANGELOG.md) for released features.
 
-### Locating the HEY CLI
+## Getting started
 
-The CLI is resolved lazily, when a request needs it: with the default nil
-`hey-executable`, `hey` is looked up in `exec-path`, so installing it after
-Emacs started needs a restart or an `exec-path` update.  Set `hey-executable`
-to an absolute local executable to skip that lookup; while it is set there is
-no fallback to another `hey`, so a stale or mistyped override fails loudly.
+Run `M-x hey` to open the Imbox for the account selected in the CLI. Move to
+an entry with `n` or `p`, press `RET` to read it, and press `q` to return.
+Use `B` to choose another box or `/` to search mail.
 
-When the CLI cannot be used, `M-x hey` still opens the list and names the case
-that failed and what to change; press `g` to retry.  Guidance is package-owned,
-so candidate paths and operating-system errors stay out of the buffer.
+The package defines no global key bindings. After installation, an optional
+`use-package` configuration gives the entry command a key:
 
-## Synthetic demo
+```elisp
+(use-package hey
+  :ensure nil
+  :commands hey
+  :bind ("C-c h" . hey))
+```
 
-After `make bootstrap`, launch the complete asynchronous reader without a HEY
-installation, credentials, mailbox data, subprocess, or network access:
+Set `hey-account` to a linked account ID or `"all"` to choose the starting
+account, and `hey-initial-box` to choose the starting box. Changing accounts
+with `a` affects only the current list session.
+
+Emacs finds the `hey` executable through `exec-path`. If it cannot find the
+CLI, update `exec-path` or set `hey-executable` to its absolute local path.
+An invalid explicit path does not fall back to another executable. Startup
+errors appear in the list buffer; press `g` to retry after correcting them.
+
+## Reading mail
+
+In the mail list, the following keys are available:
+
+| Key | Command | Action |
+| --- | --- | --- |
+| `RET` | `hey-open` | Open the entry in this window |
+| `o` | `hey-open-other-window` | Open the entry in another window |
+| `n` / `p` | `hey-next-row` / `hey-previous-row` | Move between entries |
+| `g` | `hey-refresh` | Fetch the list again from its first page |
+| `M` | `hey-load-more` | Load the next page |
+| `B` | `hey-choose-box` | Choose a box |
+| `a` | `hey-choose-account` | Choose an account |
+| `L` | `hey-choose-label` | Choose a label |
+| `C` | `hey-choose-collection` | Choose a collection |
+| `/` | `hey-search` | Search the current account |
+
+When more results are available, the list also has a `[Load more]` button.
+Activate it with `RET` or mouse-2. Opening a bundle shows its contact's seen
+and unseen mail when available.
+
+The header counts unread entries among the displayed results: `3/20` means
+three unread out of twenty displayed. Search results have unknown read state
+and show `?/20`; an empty list shows `0/0`. Outside search, mail counts as
+seen only when the CLI explicitly reports it as seen.
+
+In a thread, `n` and `p` move between messages, `SPC` and `DEL` scroll, and
+`RET` follows a supported HEY link. Press `A` to list the thread's attachments.
+
+Both list and thread buffers provide `b` to open the corresponding HEY URL,
+`y` to copy it, `q` to return, and `?` for mode help. Following a URL opens the
+official application, where you can reply or make other mailbox changes.
+Links in message bodies are limited to supported HEY URLs; other links stay
+inert.
+
+## Saving attachments
+
+Press `A` in a loaded thread to see its attachments, then `s` or `RET` to
+save the selected file. Choose a new local destination: saving never replaces
+an existing file, directory, or symlink, and does not open the saved file.
+
+In the attachment list, `g` refreshes, `c` cancels a download, and `q` returns
+to the thread while the download continues. Killing the attachment buffer
+cancels its download. The header shows when saving is active, and the echo
+area reports the result.
+
+Saving requires a filesystem that supports hard links. Downloads use a
+temporary `.hey-attachment-*` directory beside the destination, which is
+removed after completion or cancellation. A crash may leave this directory
+behind. The timeout is 120 seconds; customize
+`hey-attachment-save-timeout-seconds` to change it.
+
+## Customization
+
+Run `M-x customize-group RET hey RET` to browse the options and faces. Use
+`C-h v` to read an option's documentation.
+
+Lists show Subject, Sender, Labels / collections, and When. Narrow windows
+omit memberships; the smallest layout keeps Subject and When. Customize
+`hey-list-subject-max-width` and `hey-list-sender-max-width` to change the
+column widths of 70 and 24. Truncated values remain available in
+help text. Dates show today's time or a compact date; bundles without a
+single topic leave the date blank.
+
+Faces inherit from the active theme. Customize `hey-unseen-face`,
+`hey-date-face`, `hey-label-face`, and `hey-collection-face` for list entries,
+`hey-thread-subject-face` for thread headings, and the `hey-header-*` faces
+for header elements. Unseen and collection markers convey meaning alongside
+color. Set `hey-highlight-current-row` to nil to disable the row highlight.
+
+## Privacy
+
+`hey.el` reads mailbox and application state without changing it. Saving an
+attachment writes a local file at your request. The package adds no mail
+body cache, does not persist search text, and neither accepts nor stores
+bearer tokens.
+
+The CLI manages its own authentication and operational files. It can refresh
+or migrate credentials, create an installation ID, update its HTTP cache,
+record its last-run version, refresh CLI-owned agent skills after an upgrade,
+and remove stale self-upgrade files and locks. Read-only access to your
+mailbox does not prevent these CLI-owned writes.
+
+## Development
+
+Run the full check before submitting a change:
+
+```sh
+make check
+```
+
+This runs tests, byte compilation, lint, the read-operation audit, packaging,
+and a clean installation check. Tests use synthetic fixtures and the
+repository's fake CLI. A missing fake is an error; tests never fall back to
+an installed `hey`. CLI compatibility is checked against its source and
+fixtures. Authenticated validation is a separate human check, and attachment
+user testing remains outstanding.
+
+`make bootstrap` installs checksum-pinned `markdown-mode` 2.8 and
+`package-lint` 0.26 under `test/tmp`. To use an existing Markdown installation,
+pass `MARKDOWN_MODE_DIR=/path/to/markdown-mode-2.8`. For an offline bootstrap,
+set `MARKDOWN_MODE_ARCHIVE` and `PACKAGE_LINT_ARCHIVE` to the archives specified
+in `tools/bootstrap.el`; checksum verification still applies. Set `EMACS` to
+choose an Emacs executable.
+
+Individual targets are `test`, `compile`, `lint`, `read-only-check`, `package`,
+and `install-check`. The package archive in `dist/` contains the three runtime
+libraries, `LICENSE`, and a generated `hey-pkg.el` derived from the headers in
+`hey.el`.
+
+To try the interface with sample mail, run this from the checkout after
+`make bootstrap`:
 
 ```sh
 emacs -Q -L test/tmp/elpa/markdown-mode-2.8 -L . \
   -l test/hey-demo.el -f hey-demo
 ```
 
-Useful keys are `RET`/`o` to open, `n`/`p` to move, `g` to refresh, `M` or the
-`[Load more]` control at the bottom of the list to load more, `B` for boxes,
-`a` for accounts, `L`/`C` for labels/collections, `/` for search, `b`/`y` for
-validated HEY URLs, `?` for mode help, and `q` to return.
+The demo needs no HEY installation or credentials and uses no subprocesses or
+network. It lists sample attachments but does not save them.
 
-`make install-check` exercises a clean installation of the built package.
-
-## Appearance
-
-Run `M-x customize-group RET hey` to adjust the package options and faces,
-including the current-row highlight.  Theme authors can customize
-`hey-unseen-face`, `hey-date-face`, `hey-label-face`,
-`hey-collection-face`, `hey-thread-subject-face`,
-`hey-metadata-label-face`, `hey-status-face`, `hey-warning-face`, and
-`hey-error-face` without replacing the list, header-line, or Markdown faces
-owned by their respective modes.
-
-Header lines add `hey-header-account-face`, `hey-header-source-face`,
-`hey-header-subject-face`, `hey-header-count-face`,
-`hey-header-updated-face`, `hey-header-separator-face`,
-`hey-header-status-face`, `hey-header-warning-face`, and
-`hey-header-error-face` for account, source, subject, row count, last
-refresh, separator, and state text.  Each inherits `header-line`, which supplies
-the theme's header background and other attributes as a fallback; a
-meaning-bearing face ahead of it, or a custom face setting, still wins.  No
-header line prints the package name; buffer names such as
-`*HEY: 101 / Imbox*` and the `HEY-List` and `HEY-Thread` modes identify it.
-
-Lists follow a Subject, Sender, Labels / collections, and When scan order.
-Subject receives flexible width up to 70 columns by default; customize
-`hey-list-subject-max-width` to change the cap.  Sender grows up to 24 columns;
-customize `hey-list-sender-max-width` to change its cap.  Truncated subjects and
-senders retain their full text in help.  The subdued When column right-aligns
-today's time or a compact date inside its fixed 12 columns and sits directly
-after the last content column; surplus window width stays empty to the right of
-the table, which stops two columns short of the window edge while the column
-floors allow it.
-Bundle rows without one readable topic leave When blank: the CLI supplies one
-timestamp for the aggregate, not an authoritative time for every subject joined
-in that row.  `RET` uses the bundle contact's read-only thread list when
-available, so already-read bundled mail remains reachable.  Summaries stay out
-of rows.
-
-When the current source has another page ready, the list offers `[Load more]`
-at the bottom of the table; push it with `RET` or mouse-2, or press `M`.  The
-control uses the standard `button` face, so it follows the active theme.
-
-## Read-only and privacy boundary
-
-The Emacs package has a closed allowlist of read operations.  It does not
-provide compose, reply, draft, seen/unseen, move, label mutation, screening,
-trash, spam, or other write commands.  Opening a validated HEY application URL
-is an explicit handoff to the official application, where write actions may be
-available.
-
-The package adds no body cache and does not persist search text.  The CLI can
-still refresh or migrate its own credentials, create an installation ID, update
-its HTTP revalidation cache, record its last-run version, and refresh CLI-owned
-copies of its agent `SKILL.md` when the CLI version changes.  Ordinary CLI
-startup may also remove stale self-upgrade sidecar files and its lock beside
-the CLI executable.  These CLI-owned operational side effects are independent
-of mailbox mutation.
-
-## Development
-
-The complete local gate is:
-
-```sh
-make check
-```
-
-`make bootstrap` installs checksum-pinned `markdown-mode` 2.8 and
-`package-lint` 0.26 artifacts into an isolated directory under `test/tmp`.
-To use an existing 2.8 checkout or installation instead, provide its directory:
-
-```sh
-make MARKDOWN_MODE_DIR=/path/to/markdown-mode-2.8 check
-```
-
-For an offline clean bootstrap, set `MARKDOWN_MODE_ARCHIVE` and
-`PACKAGE_LINT_ARCHIVE` to the exact archives named in `tools/bootstrap.el`;
-their pinned SHA-256 digests are still enforced.
-
-Individual targets are `test`, `compile`, `lint`, `package`, and
-`install-check`.  Every automated test binds `hey-executable` to the
-repository's scenario-driven fake executable; a missing fake is a hard failure,
-never a fallback to an installed `hey` program.  Tests which exercise a nil
-`hey-executable` stub the discovery lookup.
-
-The package target creates a deterministic multi-file tar archive in `dist/`.
-Only `hey.el`, `hey-cli.el`, `hey-model.el`, `LICENSE`, and a generated
-`hey-pkg.el` descriptor enter that artifact.  The descriptor is derived from
-the package headers in `hey.el`; it is not tracked in the repository.
-
-See `docs/read-only-plan.md` for the architecture, scope, security properties,
-and validation rules.
+Read [AGENTS.md](AGENTS.md) for contribution guidelines. Include Emacs and
+HEY CLI versions in bug reports, and use synthetic or sanitized examples
+instead of private mail.
 
 ## License
 
-`hey.el` is available under the MIT License. See `LICENSE`.
+`hey.el` is available under the [MIT License](LICENSE).
