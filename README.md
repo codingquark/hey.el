@@ -72,10 +72,9 @@ In the mail list, the following keys are available:
 | `L` | `hey-choose-label` | Choose a label |
 | `C` | `hey-choose-collection` | Choose a collection |
 | `/` | `hey-search` | Search the current account |
-
-When more results are available, the list also has a `[Load more]` button.
-Activate it with `RET` or mouse-2. Opening a bundle shows its contact's seen
-and unseen mail when available.
+| `RET` | `hey-follow-link` | Open link at point |
+| `l` | `hey-show-link` | Show the link destination in the echo area |
+| `c` | `hey-copy-link` | Copy the link destination |
 
 The header counts unread entries among the displayed results: `3/20` means
 three unread out of twenty displayed. Search results have unknown read state
@@ -83,13 +82,15 @@ and show `?/20`; an empty list shows `0/0`. Outside search, mail counts as
 seen only when the CLI explicitly reports it as seen.
 
 In a thread, `n` and `p` move between messages, `SPC` and `DEL` scroll, and
-`RET` follows a supported HEY link. Press `A` to list the thread's attachments.
+`A` lists the thread's attachments. The following keys act on body links:
+
+The destination also appears when point enters a link. Root-relative links
+resolve to `https://app.hey.com`; non-web schemes stay inert.
 
 Both list and thread buffers provide `b` to open the corresponding HEY URL,
-`y` to copy it, `q` to return, and `?` for mode help. Following a URL opens the
-official application, where you can reply or make other mailbox changes.
-Links in message bodies are limited to supported HEY URLs; other links stay
-inert.
+`y` to copy it, `q` to return, and `?` for mode help. These URLs stay limited
+to the official HEY application, where you can reply or make other mailbox
+changes.
 
 ## Saving attachments
 
@@ -132,6 +133,10 @@ color. Set `hey-highlight-current-row` to nil to disable the row highlight.
 attachment writes a local file at your request. The package adds no mail
 body cache, does not persist search text, and neither accepts nor stores
 bearer tokens.
+
+The package never fetches body links or previews their destinations.
+Opening a link delegates to `browse-url`. Echoed link destinations stay out
+of the `*Messages*` log.
 
 The CLI manages its own authentication and operational files. It can refresh
 or migrate credentials, create an installation ID, update its HTTP cache,

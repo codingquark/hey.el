@@ -49,21 +49,96 @@
                  "https://app.hey.com@evil.invalid/topics/77"
                  "https://APP.HEY.COM/topics/77"
                  "https://app.hey.com\\topics\\77"
-                 "https://app.hey.com/topics/77\nnext"))
+                 "https://app.hey.com/topics/77\nnext"
+                 "https://example.invalid/topics/77"))
     (should-not (hey-model-validate-app-url url))))
 
-(ert-deftest hey-model-resolves-only-root-relative-body-links ()
+(ert-deftest hey-model-validates-any-host-for-absolute-web-links ()
+  (dolist (url '("https://example.invalid/report?a=1#top"
+                 "http://example.invalid"
+                 "https://example.invalid:8443/report"
+                 "https://example.invalid:65535/report"
+                 "https://user:pw@example.invalid:8443/report"
+                 "https://[::1]/report"
+                 "https://[2001:db8::1]/report"
+                 "https://[::1]:8443/report"
+                 "HTTP://EXAMPLE.INVALID/report"
+                 "https://example.invalid#frag"
+                 "https://xn--80ak6aa92e.com"
+                 "https://xn--bcher-kva.example"))
+    (should (equal (hey-model-validate-web-url url) url)))
+  (dolist (url (list "javascript:alert(1)"
+                     "file:///tmp/mail"
+                     "mailto:reader@example.invalid"
+                     "ftp://example.invalid/mail"
+                     "data:text/html,x"
+                     "https://"
+                     "https:///report"
+                     "https:/report"
+                     "//evil.invalid/report"
+                     "report"
+                     "../report"
+                     "/topics/77"
+                     "https://#fragment"
+                     "https://example.invalid:bad/report"
+                     "https://example.invalid:65536/report"
+                     "https://example.invalid:80:90/report"
+                     "https://:80/report"
+                     "https://a@b@c/report"
+                     "https://[garbage]/report"
+                     "https://[::1]:bad/report"
+                     "https://[::1]:65536/report"
+                     "https://[::1]:/report"
+                     "https://example.invalid/a b"
+                     (concat "https://example.invalid/a" (string 27))
+                     (concat "https://example.invalid/a" (string #x202e))
+                     "https://example.invalid\\a"))
+    (should-not (hey-model-validate-web-url url))))
+
+(ert-deftest hey-model-checks-bracketed-hosts-only-for-shape ()
+  "Accept any bracketed run of hexadecimal digits, dots, and colons.
+
+The IPv6 grammar is out of scope: Emacs has no pure syntax predicate for
+it, and a malformed literal fails at the browser rather than here."
+  (dolist (url '("https://[::1]/report"
+                 "https://[2001:db8::1]:8443/report"
+                 "https://[abc]/report"
+                 "https://[::::]/report"))
+    (should (equal (hey-model-validate-web-url url) url))))
+
+(ert-deftest hey-model-keeps-percent-encoded-link-targets ()
+  "Keep written escapes intact rather than decoding them."
+  (dolist (url '("https://example.invalid/report%20name.pdf"
+                 "https://example.invalid/a%0Ab%0Dc%1Bd"
+                 "https://example.invalid/a%25b%2Fc%3Fd%23e"
+                 "https://example.invalid/wiki/A_%28b%29"))
+    (should (equal (hey-model-validate-web-url url) url))
+    (should (equal (hey-model-resolve-body-url url) url))))
+
+(ert-deftest hey-model-escapes-unsafe-url-display-characters ()
+  (should (equal (hey-model-format-url-display
+                  "https://example.invalid/report?a=1#top")
+                 "https://example.invalid/report?a=1#top"))
+  (should (equal (hey-model-format-url-display
+                  (concat "https://example.invalid/a" (string 27)
+                          (string #x202e) "b"))
+                 "https://example.invalid/a\\u001B\\u202Eb")))
+
+(ert-deftest hey-model-resolves-body-links-to-a-followable-destination ()
   (should (equal (hey-model-resolve-body-url "/topics/77#entry-1")
                  "https://app.hey.com/topics/77#entry-1"))
   (should (equal (hey-model-resolve-body-url
                   "https://app.hey.com/topics/77")
                  "https://app.hey.com/topics/77"))
+  (should (equal (hey-model-resolve-body-url
+                  "https://example.invalid/report")
+                 "https://example.invalid/report"))
   (dolist (url '("//evil.invalid/topics/77"
                  "topics/77"
                  "../topics/77"
                  "file:///tmp/mail"
                  "javascript:alert(1)"
-                 "https://evil.invalid/topics/77"))
+                 "mailto:reader@example.invalid"))
     (should-not (hey-model-resolve-body-url url))))
 
 (ert-deftest hey-model-normalizes-accounts-defensively ()

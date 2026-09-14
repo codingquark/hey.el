@@ -57,6 +57,16 @@
       ("body" . "") ("body_state" . "over_limit")))
     ,@(when notice `(("notice" . ,notice)))))
 
+(defun hey-test--link-thread-envelope (body-markdown)
+  "Return a synthetic one-entry thread envelope whose body is BODY-MARKDOWN."
+  `(("ok" . t)
+    ("data" (("id" . 801)
+             ("created_at" . "2026-09-01 09:10")
+             ("creator" ("name" . "Alice Example"))
+             ("body" . ,body-markdown)
+             ("body_state" . "hydrated")
+             ("app_url" . "https://app.hey.com/topics/901#entry-801")))))
+
 (defun hey-test--account ()
   "Return the normalized synthetic account used by UI tests."
   (make-hey-account :id "101" :name "Personal"
@@ -78,6 +88,28 @@
            hey--source (hey-test--source))
      ,@body))
 
+(defmacro hey-test-with-thread-body (body-markdown &rest body)
+  "Evaluate BODY in a disposable thread buffer holding BODY-MARKDOWN."
+  (declare (indent 1) (debug body))
+  `(with-temp-buffer
+     (hey-thread-mode)
+     (setq hey--thread
+           (plist-get
+            (hey-model-normalize-thread
+             (hey-test--link-thread-envelope ,body-markdown)
+             (list :account-id "101" :account-name "Personal"
+                   :topic-id "901" :subject "Link thread"
+                   :source-title "Imbox"))
+            :value))
+     (hey--render-thread)
+     ,@body))
+
+(defun hey-test--point-at-link (label)
+  "Move point onto the body link labeled LABEL."
+  (goto-char (point-min))
+  (search-forward label)
+  (forward-char -1))
+
 (ert-deftest hey-ui-modes-are-read-only-and-restrict-markdown-map ()
   (hey-test-with-list
     (should (derived-mode-p 'tabulated-list-mode))
@@ -85,7 +117,8 @@
     (should (local-variable-p 'hey--source))
     (should (local-variable-p 'hey--records))
     (should (eq (key-binding (kbd "g")) #'hey-refresh))
-    (should-not (lookup-key hey-list-mode-map (kbd "x"))))
+    (should-not (lookup-key hey-list-mode-map (kbd "x")))
+    (should-not (memq #'hey--track-body-link post-command-hook)))
   (with-temp-buffer
     (hey-thread-mode)
     (should (derived-mode-p 'markdown-view-mode))
@@ -99,7 +132,33 @@
     (should (eq (lookup-key hey-thread-mode-map (kbd "TAB")) #'ignore))
     (should-not (commandp (lookup-key hey-thread-mode-map (kbd "C-c C-c"))))
     (should-not (lookup-key hey-thread-mode-map [mouse-2]))
-    (should (eq (key-binding (kbd "RET")) #'hey-follow-link))))
+    (should (eq (key-binding (kbd "RET")) #'hey-follow-link))
+    (should (eq (key-binding (kbd "l")) #'hey-show-link))
+    (should (eq (key-binding (kbd "c")) #'hey-copy-link))
+    (should (eq (key-binding (kbd "?")) #'describe-mode))
+    (should (memq #'hey--track-body-link post-command-hook))
+    (should (local-variable-p 'post-command-hook))))
+
+(ert-deftest hey-ui-thread-disables-only-inherited-markdown-eldoc ()
+  "Keep Markdown's competing URL display out of HEY threads."
+  (with-temp-buffer
+    (markdown-mode)
+    (let ((markdown-hook (copy-sequence eldoc-documentation-functions))
+          (default-hook (copy-sequence
+                         (default-value 'eldoc-documentation-functions))))
+      (should (memq #'markdown-eldoc-function markdown-hook))
+      (with-temp-buffer
+        (hey-thread-mode)
+        (should-not (memq #'markdown-eldoc-function
+                          eldoc-documentation-functions))
+        (should (memq #'hey--track-body-link post-command-hook)))
+      (should (equal eldoc-documentation-functions markdown-hook))
+      (should (equal (default-value 'eldoc-documentation-functions)
+                     default-hook))))
+  (with-temp-buffer
+    (markdown-mode)
+    (should (memq #'markdown-eldoc-function eldoc-documentation-functions))
+    (should-not (memq #'hey--track-body-link post-command-hook))))
 
 (ert-deftest hey-ui-list-highlights-current-row-with-theme-face ()
   (let ((hey-highlight-current-row t))
@@ -1292,17 +1351,174 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
       (should (equal opened "https://app.hey.com/topics/901"))
       (should (equal copied opened)))))
 
-(ert-deftest hey-ui-thread-link-activation-allows-only-official-targets ()
-  (with-temp-buffer
-    (hey-thread-mode)
-    (let (opened)
-      (cl-letf (((symbol-function 'markdown-link-url) (lambda () "/topics/901"))
-                ((symbol-function 'browse-url) (lambda (url &rest _) (setq opened url))))
-        (hey-follow-link))
-      (should (equal opened "https://app.hey.com/topics/901"))
-      (cl-letf (((symbol-function 'markdown-link-url)
-                 (lambda () "file:///tmp/private")))
-        (should-error (hey-follow-link) :type 'user-error)))))
+(ert-deftest hey-ui-thread-activation-opens-any-web-link ()
+  "Open external and HEY link targets, and no other scheme."
+  (hey-test-with-thread-body
+      (concat "Read [external-target](https://example.invalid/a?b=1), "
+              "[topic-target](/topics/901), or "
+              "[local-target](file:///tmp/private).")
+    (let (opened copied)
+      (cl-letf (((symbol-function 'browse-url)
+                 (lambda (url &rest _) (push url opened)))
+                ((symbol-function 'kill-new)
+                 (lambda (url &rest _) (push url copied))))
+        (dolist (label '("external-target" "topic-target"))
+          (hey-test--point-at-link label)
+          (hey-follow-link))
+        (should (equal (reverse opened)
+                       '("https://example.invalid/a?b=1"
+                         "https://app.hey.com/topics/901")))
+        (hey-test--point-at-link "local-target")
+        (dolist (command (list #'hey-follow-link #'hey-show-link
+                               #'hey-copy-link))
+          (should-error (funcall command) :type 'user-error))
+        (should (= (length opened) 2))
+        (should-not copied)))))
+
+(ert-deftest hey-ui-thread-link-destination-is-shown-and-copied ()
+  "Report a link destination on request without recording it in the log."
+  (hey-test-with-thread-body
+      "Read [external-target](https://example.invalid/annual#q=1)."
+    (let (copied messages logged)
+      (cl-letf (((symbol-function 'kill-new)
+                 (lambda (url &rest _) (setq copied url)))
+                ((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (push (apply #'format format-string args) messages)
+                   (push message-log-max logged))))
+        (hey-test--point-at-link "external-target")
+        (hey-show-link)
+        (should (equal (car messages)
+                       "Link: https://example.invalid/annual#q=1"))
+        (should-not (car logged))
+        (hey-copy-link)
+        (should (equal copied "https://example.invalid/annual#q=1"))
+        (should (equal (car messages) "Copied link destination"))
+        (should-not (string-match-p "example.invalid" (car messages)))))))
+
+(defconst hey-test--link-forms
+  `(("Read [alpha](https://example.invalid/report%20name.pdf) now."
+     "alpha"
+     "https://example.invalid/report%20name.pdf")
+    ("Read [bravo](https://example.invalid/a%0Ab%0Dc%1Bd) now."
+     "bravo"
+     "https://example.invalid/a%0Ab%0Dc%1Bd")
+    ("Read [charlie](https://example.invalid/a%25b%2Fc%3Fd%23e) now."
+     "charlie"
+     "https://example.invalid/a%25b%2Fc%3Fd%23e")
+    ("Read [delta](<https://example.invalid/a%20b>) now."
+     "delta"
+     "https://example.invalid/a%20b")
+    ("Read [echo](https://example.invalid/a%20b \"Note\") now."
+     "echo"
+     "https://example.invalid/a%20b")
+    ("Read [foxtrot](https://example.invalid/a b) now."
+     "foxtrot"
+     "https://example.invalid/a")
+    ("Read [golf](https://example.invalid/wiki/A_%28b%29) now."
+     "golf"
+     "https://example.invalid/wiki/A_%28b%29")
+    ("Read https://example.invalid/hotel%20name.pdf now."
+     "hotel%20name"
+     "https://example.invalid/hotel%20name.pdf")
+    ("Read <https://example.invalid/india%20name.pdf> now."
+     "india%20name"
+     "https://example.invalid/india%20name.pdf")
+    ("Read [juliet][ref] now.\n\n[ref]: https://example.invalid/kilo%20name.pdf"
+     "juliet"
+     "https://example.invalid/kilo%20name.pdf")
+    ("Read ![lima](https://example.invalid/pic%20a.png) now."
+     "lima"
+     "https://example.invalid/pic%20a.png")
+    ("Read [mike](/topics/901) now."
+     "mike"
+     "https://app.hey.com/topics/901")
+    ("Read [november](<https://example.invalid/a%20b> \"Note\") now."
+     "november"
+     "https://example.invalid/a%20b")
+    ("Read [oscar](https://example.invalid/a%20b\n \"Note\") now."
+     "oscar"
+     "https://example.invalid/a%20b")
+    ("Read [papa\nvictor](https://example.invalid/papa%20name.pdf) now."
+     "victor"
+     "https://example.invalid/papa%20name.pdf")
+    ("Read [quebec](/topics/901\n \"Note\") now."
+     "quebec"
+     "https://app.hey.com/topics/901"))
+  "Body link forms: buffer text, a label to visit, and the destination.")
+
+(ert-deftest hey-ui-thread-link-keeps-the-written-destination ()
+  "Report every body link form with its escapes and delimiters intact."
+  (dolist (case hey-test--link-forms)
+    (pcase-let ((`(,markdown ,label ,destination) case))
+      (hey-test-with-thread-body markdown
+        (let (copied echoed)
+          (cl-letf (((symbol-function 'kill-new)
+                     (lambda (url &rest _) (setq copied url)))
+                    ((symbol-function 'message)
+                     (lambda (format-string &rest args)
+                       (setq echoed (apply #'format format-string args)))))
+            (hey-test--point-at-link label)
+            (hey-copy-link)
+            (should (equal copied destination))
+            (hey-show-link)
+            (should (equal echoed (concat "Link: " destination)))))))))
+
+(ert-deftest hey-ui-thread-link-lookup-preserves-match-data ()
+  "Preserve caller match data when resolving or rejecting a body link."
+  (dolist (case (append hey-test--link-forms
+                       '(("Read [local](file:///tmp/private)." "local" nil)
+                         ("Read plain text." "plain" nil))))
+    (pcase-let ((`(,markdown ,label ,destination) case))
+      (hey-test-with-thread-body markdown
+        (hey-test--point-at-link label)
+        (string-match "\\(sentinel\\)" "sentinel")
+        (let* ((before (match-data))
+               (url (hey--link-at-point))
+               (after (match-data)))
+          (should (equal url destination))
+          (should (equal before after)))))))
+
+(ert-deftest hey-ui-thread-echo-reports-a-new-link-only ()
+  "Show a destination once, stay silent otherwise, and refresh on re-entry."
+  (hey-test-with-thread-body
+      "Read [external-target](https://example.invalid/annual)."
+    (let (messages)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (push (apply #'format format-string args) messages))))
+        (hey-test--point-at-link "Read")
+        (should-not messages)
+        (hey-test--point-at-link "external-target")
+        (hey--track-body-link)
+        (should (equal (car messages) "Link: https://example.invalid/annual"))
+        (hey--track-body-link)
+        (should (= (length messages) 1))
+        (hey-test--point-at-link "Read")
+        (hey--track-body-link)
+        (should (= (length messages) 1))
+        (should-not hey--echoed-url)
+        (hey-test--point-at-link "external-target")
+        (hey--track-body-link)
+        (should (= (length messages) 2))))))
+
+(ert-deftest hey-ui-thread-echo-stays-quiet-from-the-minibuffer ()
+  "Leave the echo area alone while the minibuffer is active."
+  (dolist (active '(minibufferp active-minibuffer-window))
+    (hey-test-with-thread-body
+        "Read [external-target](https://example.invalid/annual)."
+      (let (messages)
+        (cl-letf (((symbol-function 'message)
+                   (lambda (format-string &rest args)
+                     (push (apply #'format format-string args) messages)))
+                  ((symbol-function 'minibufferp)
+                   (lambda (&optional _) (eq 'minibufferp active)))
+                  ((symbol-function 'active-minibuffer-window)
+                   (lambda () (eq 'active-minibuffer-window active))))
+          (hey-test--point-at-link "external-target")
+          (hey--track-body-link)
+          (should-not messages)
+          (should-not hey--echoed-url))))))
 
 (ert-deftest hey-ui-cancellation-invalidates-callback-before-delivery ()
   "Keep synchronous cancellation callbacks out of the next refresh."

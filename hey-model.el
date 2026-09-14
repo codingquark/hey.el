@@ -223,19 +223,51 @@ rejected rather than normalized."
               string))
         (error nil)))))
 
-(defun hey-model-resolve-body-url (string)
-  "Validate or resolve an email-body link STRING against the HEY origin.
+(defconst hey-model--web-url-regexp
+  (concat
+   "\\`[hH][tT][tT][Pp][sS]?://"
+   "\\(?:[^][/?@#]+@\\)?"
+   "\\(?:\\[\\([0-9A-Fa-f:.]+\\)\\]\\|\\([^][/?@:#]+\\)\\)"
+   "\\(?::\\([0-9]+\\)\\)?\\(?:[/?#]\\|\\'\\)")
+  "Regexp matching a web URL's scheme, user information, host, and port.
+Group 1 is a bracketed host, group 2 a named host, and group 3 the port.
+Bracketed hosts allow hexadecimal digits, dots, and colons without full
+IPv6 validation.  Unsafe characters are rejected by the caller.")
 
-Absolute links are accepted only at the official application origin.
-Root-relative links are resolved there.  Scheme-relative, path-relative,
-local-file, and all other URL forms return nil."
+(defun hey-model-validate-web-url (string)
+  "Return STRING for an absolute http or https URL; otherwise return nil.
+Accept any host matching `hey-model--web-url-regexp' and ports up to 65535.
+Reject whitespace, controls, backslashes, and bidi controls without
+normalizing the destination."
+  (let ((case-fold-search nil))
+    (when (and (stringp string)
+               (not (string-match-p
+                     "[[:space:][:cntrl:]\\\\\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
+                     string))
+               (string-match hey-model--web-url-regexp string))
+      (let ((port (match-string-no-properties 3 string)))
+        (when (or (null port) (<= (string-to-number port) 65535))
+          string)))))
+
+(defun hey-model-format-url-display (string)
+  "Escape control and bidi characters in destination STRING as `\\uXXXX'."
+  (let ((case-fold-search nil))
+    (replace-regexp-in-string
+     "[[:cntrl:]\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
+     (lambda (match) (format "\\u%04X" (aref match 0)))
+     string nil t)))
+
+(defun hey-model-resolve-body-url (string)
+  "Return the validated destination of email-body link STRING, or nil.
+Keep absolute http and https URLs unchanged.  Resolve root-relative links
+against the official HEY origin.  Reject all other forms."
   (cond
    ((hey-model-validate-app-url string) string)
    ((and (stringp string)
          (string-prefix-p "/" string)
          (not (string-prefix-p "//" string)))
     (hey-model-validate-app-url (concat hey-model--official-origin string)))
-   (t nil)))
+   (t (hey-model-validate-web-url string))))
 
 (defun hey-model--warning (kind index reason)
   "Build a non-sensitive warning for KIND record INDEX and REASON."

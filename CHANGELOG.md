@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Open http and https body links with `RET` through `browse-url`; show their
+  destinations with `l` and copy them with `c`. Root-relative links resolve
+  to the official HEY origin; non-web schemes stay inert. The `b` and `y`
+  targets remain limited to the official application.
+- Preserve percent-encoded destinations and handle multiline link titles.
+- Echo link destinations on entry without logging them to `*Messages*`.
+  Suppress competing Markdown Eldoc output only in HEY thread buffers.
+
 ## 0.3.0 - 2026-09-12
 
 - List thread attachments with `A`, including embedded files and partial-read

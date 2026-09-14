@@ -23,6 +23,7 @@
 (require 'hl-line)
 (require 'subr-x)
 (require 'tabulated-list)
+(require 'thingatpt)
 (require 'markdown-mode)
 (require 'hey-model)
 (require 'hey-cli)
@@ -165,6 +166,8 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
     (define-key map (kbd "SPC") #'scroll-up-command)
     (define-key map (kbd "DEL") #'scroll-down-command)
     (define-key map (kbd "RET") #'hey-follow-link)
+    (define-key map (kbd "l") #'hey-show-link)
+    (define-key map (kbd "c") #'hey-copy-link)
     (define-key map (kbd "A") #'hey-list-attachments)
     ;; Keep Markdown table and folding commands unavailable.
     (define-key map (kbd "TAB") #'ignore)
@@ -188,6 +191,8 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
 (defvar-local hey--columns-key nil)
 (defvar-local hey--thread nil)
 (defvar-local hey--thread-key nil)
+(defvar-local hey--echoed-url nil
+  "Body-link destination last shown in the echo area, suppressing repeats.")
 (defvar-local hey--origin nil)
 (defvar-local hey--operation-overrides nil)
 
@@ -1306,14 +1311,74 @@ FACE defaults to `hey-status-face'."
                               (hey--entry-starts))))))
     (if previous (goto-char previous) (user-error "No previous HEY entry"))))
 
+(defun hey--inline-link-destination (start end)
+  "Return the undecoded inline link destination between START and END.
+START is the opening parenthesis; END is the matched link's end.
+Scan balanced parentheses to include any nested destination parentheses."
+  (let* ((close (condition-case nil (scan-sexps start 1) (error end)))
+         (part (string-trim
+                (buffer-substring-no-properties (1+ start) (1- close)))))
+    (cond
+     ;; Explicit whitespace keeps multiline titles independent of syntax tables.
+     ((string-match "\\`<\\([^>]*\\)>" part)
+      (match-string-no-properties 1 part))
+     ((string-match "\\`\\([^ \t\n\r\f\v]+\\)" part)
+      (match-string-no-properties 1 part))
+     (t part))))
+
+(defun hey--link-at-point ()
+  "Return the validated body-link destination at point, or nil.
+Preserve match data and the destination's percent escapes."
+  (save-match-data
+    (hey-model-resolve-body-url
+     ;; Markdown decodes spaces and controls only in inline destinations.
+     (if (thing-at-point-looking-at markdown-regex-link-inline)
+         (hey--inline-link-destination (match-beginning 5) (match-end 0))
+       (markdown-link-url)))))
+
+(defun hey--link-at-point-or-error ()
+  "Return the destination of the activatable link at point, or fail."
+  (or (hey--link-at-point)
+      (user-error "Point is not at a web or HEY application link")))
+
+(defun hey--echo-link (url)
+  "Show destination URL in the echo area without logging it."
+  (let ((message-log-max nil))
+    (message "Link: %s" (hey-model-format-url-display url))))
+
+(defun hey--track-body-link ()
+  "Show a changed body-link destination unless the minibuffer is active.
+Leaving a link resets tracking without displaying a message.
+Ignore lookup errors to keep this `post-command-hook' function active."
+  (unless (or (minibufferp) (active-minibuffer-window))
+    (condition-case nil
+        (let ((url (hey--link-at-point)))
+          (unless (equal url hey--echoed-url)
+            (setq hey--echoed-url url)
+            (when url (hey--echo-link url))))
+      (error nil))))
+
 (defun hey-follow-link ()
-  "Follow only a validated official HEY link at point."
+  "Open the web or HEY application link at point with `browse-url'."
   (interactive)
-  (let* ((candidate (markdown-link-url))
-         (url (hey-model-resolve-body-url candidate)))
-    (if url
-        (browse-url url)
-      (user-error "Point is not at a supported HEY application link"))))
+  (let ((url (hey--link-at-point-or-error)))
+    (setq hey--echoed-url url)
+    (browse-url url)))
+
+(defun hey-show-link ()
+  "Show the destination of the link at point in the echo area."
+  (interactive)
+  (let ((url (hey--link-at-point-or-error)))
+    (setq hey--echoed-url url)
+    (hey--echo-link url)))
+
+(defun hey-copy-link ()
+  "Copy the destination of the link at point."
+  (interactive)
+  (let ((url (hey--link-at-point-or-error)))
+    (setq hey--echoed-url url)
+    (kill-new url)
+    (message "Copied link destination")))
 
 (defun hey--revert-buffer (_ignore-auto _noconfirm)
   "Asynchronously refresh the current list with `hey--refresh'."
@@ -1353,6 +1418,7 @@ FACE defaults to `hey-status-face'."
   "Read a HEY thread without changing mailbox state."
   (setq-local hey--thread nil
               hey--thread-key nil
+              hey--echoed-url nil
               hey--origin nil
               hey--generation 0
               hey--request nil
@@ -1374,7 +1440,10 @@ FACE defaults to `hey-status-face'."
               auto-save-default nil
               default-directory temporary-file-directory)
   (buffer-disable-undo)
-  (read-only-mode 1))
+  (read-only-mode 1)
+  ;; HEY reports validated destinations without logging them to *Messages*.
+  (remove-hook 'eldoc-documentation-functions #'markdown-eldoc-function t)
+  (add-hook 'post-command-hook #'hey--track-body-link t t))
 
 ;; Keep text navigation while excluding Markdown editing, export, and process
 ;; commands.
