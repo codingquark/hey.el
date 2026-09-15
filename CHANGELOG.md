@@ -8,6 +8,7 @@
   targets remain limited to the official application.
 - Preserve percent-encoded destinations and handle multiline link titles.
 - Echo link destinations on entry without logging them to `*Messages*`.
+  Truncate long previews with an ellipsis; copy and open complete destinations.
   Suppress competing Markdown Eldoc output only in HEY thread buffers.
 
 ## 0.3.0 - 2026-09-12

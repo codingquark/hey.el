@@ -84,8 +84,11 @@ seen only when the CLI explicitly reports it as seen.
 In a thread, `n` and `p` move between messages, `SPC` and `DEL` scroll, and
 `A` lists the thread's attachments. The following keys act on body links:
 
-The destination also appears when point enters a link. Root-relative links
-resolve to `https://app.hey.com`; non-web schemes stay inert.
+The destination also appears when point enters a link. Long echo previews
+end with an ellipsis; copying and opening always use the complete destination.
+Customize `hey-link-echo-max-width` to change the 80-column preview limit;
+narrow windows reduce it further. Root-relative links resolve to
+`https://app.hey.com`; non-web schemes stay inert.
 
 Both list and thread buffers provide `b` to open the corresponding HEY URL,
 `y` to copy it, `q` to return, and `?` for mode help. These URLs stay limited

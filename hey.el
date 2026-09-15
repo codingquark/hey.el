@@ -122,6 +122,13 @@ The highlight is buffer-local and uses the theme-owned `hl-line' face."
   :type 'boolean
   :group 'hey)
 
+(defcustom hey-link-echo-max-width 80
+  "Maximum width in columns of a body-link echo preview, including its prefix.
+Values below 1 use a width of 1.
+Copying and opening a link always use the complete destination."
+  :type '(integer :tag "Columns")
+  :group 'hey)
+
 (defcustom hey-list-subject-max-width 70
   "Maximum Subject column width in `hey-list-mode'."
   :type 'integer
@@ -1343,8 +1350,14 @@ Preserve match data and the destination's percent escapes."
 
 (defun hey--echo-link (url)
   "Show destination URL in the echo area without logging it."
-  (let ((message-log-max nil))
-    (message "Link: %s" (hey-model-format-url-display url))))
+  (let* ((message-log-max nil)
+         (width (max 1 (min hey-link-echo-max-width
+                            (hey--minimum-window-width)))))
+    ;; Clip only the preview; copying, opening, and tracking retain URL.
+    (message "%s"
+             (truncate-string-to-width
+              (concat "Link: " (hey-model-format-url-display url))
+              width nil nil "…"))))
 
 (defun hey--track-body-link ()
   "Show a changed body-link destination unless the minibuffer is active.
