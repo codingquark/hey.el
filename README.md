@@ -117,13 +117,14 @@ Open a bundle before marking one of its threads. Search results support
 marking when HEY supplies a posting ID; their displayed read state remains
 unknown because search does not report it.
 
-The interface shows progress while the request runs. After HEY accepts the
-change, matching list rows and unread counts update. Open lists that report
-read state fetch their loaded pages to check the result; the status distinguishes
-an accepted change from a verified read state. A failed check does not undo
-the accepted change. A timeout or interrupted request may already have reached
-HEY; refresh before trying again. The package never retries a mark-read request
-automatically.
+The header shows progress while the request runs and clears it when the write
+finishes. Results appear in the echo area without entering the message log.
+After HEY accepts the change, matching list rows and unread counts update.
+Open lists that report read state fetch their loaded pages to check the result;
+the echo area distinguishes an accepted change from a verified read state.
+A failed check does not undo the accepted change. A timeout or interrupted
+request may already have reached HEY; refresh before trying again. The package
+never retries a mark-read request automatically.
 
 ## Saving attachments
 

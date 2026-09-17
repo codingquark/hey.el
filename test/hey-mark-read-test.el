@@ -34,16 +34,39 @@
                            ("seen" . ,(if seen t 'hey-json-false))))
                        ids)))))
 
-(defmacro hey-mark-test-with-list (&rest body)
-  "Evaluate BODY in a disposable synthetic list."
+(defvar hey-mark-test--messages nil)
+(defvar hey-mark-test--message-logging nil)
+
+(defmacro hey-mark-test-with-messages (&rest body)
+  "Evaluate BODY while capturing echo messages and their logging settings."
   (declare (indent 0) (debug body))
-  `(with-temp-buffer
-     (hey-list-mode)
-     (setq hey--account (make-hey-account :id "101" :name "Personal")
-           hey--source (hey-mark-test--source)
-           hey--records (list (hey-mark-test--posting "71")))
-     (hey--render-list)
-     ,@body))
+  `(let (hey-mark-test--messages hey-mark-test--message-logging)
+     (cl-letf (((symbol-function 'message)
+                (lambda (format-string &rest args)
+                  (when format-string
+                    (push message-log-max hey-mark-test--message-logging)
+                    (push (apply #'format format-string args)
+                          hey-mark-test--messages)))))
+       ,@body)))
+
+(defmacro hey-mark-test-with-list (&rest body)
+  "Evaluate BODY in a disposable synthetic list, capturing echo messages."
+  (declare (indent 0) (debug body))
+  `(hey-mark-test-with-messages
+     (with-temp-buffer
+       (hey-list-mode)
+       (setq hey--account (make-hey-account :id "101" :name "Personal")
+             hey--source (hey-mark-test--source)
+             hey--records (list (hey-mark-test--posting "71")))
+       (hey--render-list)
+       ,@body)))
+
+(defun hey-mark-test--assert-result (text)
+  "Assert that TEXT was echoed without logging and the header status cleared."
+  (should (member text hey-mark-test--messages))
+  (should-not (cl-some #'identity hey-mark-test--message-logging))
+  (should-not hey--mark-read-status)
+  (should-not (hey--mark-read-status-text)))
 
 (defun hey-mark-test--thread (backend &optional id)
   "Initialize this thread with BACKEND and posting ID."
@@ -115,6 +138,7 @@
       (hey--render-list)
       (hey-next-row)
       (hey-mark-read)
+      (should (string-match-p "Marking read" (hey--status-header)))
       (should (equal (tabulated-list-get-id) '("101" "72")))
       (should (equal hey--mark-read-request 'write-request))
       (should (equal calls '((write "101" "72"))))
@@ -129,7 +153,9 @@
       (should (equal (hey-source-continuation hey--source) "cursor-three"))
       (should (equal (mapcar #'hey-posting-id hey--records) '("71" "72")))
       (should (equal calls '((read "cursor-two") (read nil) (write "101" "72"))))
-      (should (string-match-p "Read verified" (hey--status-header))))))
+      (hey-mark-test--assert-result "Read verified")
+      (should-not (string-match-p "Marking read\\|Read verified"
+                                  (hey--status-header))))))
 
 (ert-deftest hey-mark-read-search-stays-unknown ()
   (hey-mark-test-with-list
@@ -219,34 +245,34 @@
       (mapc #'kill-buffer (list one two three)))))
 
 (ert-deftest hey-mark-read-protects-a-pending-first-page ()
-  (let ((list-buffer (generate-new-buffer " *hey-mark-first-page*"))
-        (thread-buffer (generate-new-buffer " *hey-mark-thread*"))
-        read-success write-success)
-    (unwind-protect
-        (let ((backend
-               `((hey-cli-box-view
-                  . ,(lambda (_a _s _p _o _k _g ok _bad)
-                       (setq read-success ok)))
-                 (hey-cli-mark-read
-                  . ,(lambda (_a _p _o _k _g ok _bad &optional _f)
-                       (setq write-success ok))))))
-          (with-current-buffer list-buffer
-            (hey-list-mode)
-            (setq hey--source (hey-mark-test--source)
-                  hey--operation-overrides backend)
-            (hey-refresh))
-          (with-current-buffer thread-buffer
-            (hey-mark-test--thread backend)
-            (hey-mark-read))
-          (funcall write-success '(("ok" . t)))
-          (with-current-buffer list-buffer (should hey--loading))
-          (funcall read-success (hey-mark-test--envelope '("71")))
-          (with-current-buffer list-buffer
-            (should-not hey--loading)
-            (should (eq (hey-posting-seen (car hey--records)) 'seen))
-            (should (equal (hey--mark-read-status-text)
-                           "Read accepted; state not verified"))))
-      (mapc #'kill-buffer (list list-buffer thread-buffer)))))
+  (hey-mark-test-with-messages
+    (let ((list-buffer (generate-new-buffer " *hey-mark-first-page*"))
+          (thread-buffer (generate-new-buffer " *hey-mark-thread*"))
+          read-success write-success)
+      (unwind-protect
+          (let ((backend
+                 `((hey-cli-box-view
+                    . ,(lambda (_a _s _p _o _k _g ok _bad)
+                         (setq read-success ok)))
+                   (hey-cli-mark-read
+                    . ,(lambda (_a _p _o _k _g ok _bad &optional _f)
+                         (setq write-success ok))))))
+            (with-current-buffer list-buffer
+              (hey-list-mode)
+              (setq hey--source (hey-mark-test--source)
+                    hey--operation-overrides backend)
+              (hey-refresh))
+            (with-current-buffer thread-buffer
+              (hey-mark-test--thread backend)
+              (hey-mark-read))
+            (funcall write-success '(("ok" . t)))
+            (with-current-buffer list-buffer (should hey--loading))
+            (funcall read-success (hey-mark-test--envelope '("71")))
+            (with-current-buffer list-buffer
+              (should-not hey--loading)
+              (should (eq (hey-posting-seen (car hey--records)) 'seen))
+              (hey-mark-test--assert-result "Read accepted; state not verified")))
+        (mapc #'kill-buffer (list list-buffer thread-buffer))))))
 
 (ert-deftest hey-mark-read-rejects-an-older-refresh-callback ()
   (hey-mark-test-with-list
@@ -265,7 +291,7 @@
       (funcall write-success '(("ok" . t)))
       (funcall old-read (hey-mark-test--envelope '("71")))
       (should (eq (hey-posting-seen (car hey--records)) 'seen))
-      (should (equal (hey--mark-read-status-text) "Read verified")))))
+      (hey-mark-test--assert-result "Read verified"))))
 
 (ert-deftest hey-mark-read-source-switch-does-not-retarget-write ()
   (hey-mark-test-with-list
@@ -296,8 +322,8 @@
                   (funcall bad (make-hey-error :category 'network))))))
     (hey-mark-read)
     (should (eq (hey-posting-seen (car hey--records)) 'seen))
-    (should (string-match-p "accepted; refresh failed"
-                            (hey--mark-read-status-text)))
+    (hey-mark-test--assert-result
+     "Read accepted; refresh failed. Press g in the list.")
     (should-not hey--request)))
 
 (ert-deftest hey-mark-read-uncertain-errors-never-retry ()
@@ -313,7 +339,7 @@
         (hey-mark-read)
         (should (= calls 1))
         (should (eq (hey-posting-seen (car hey--records)) 'unseen))
-        (should (string-match-p "outcome unknown" (hey--mark-read-status-text)))
+        (hey-mark-test--assert-result "Read outcome unknown; refresh the list to check")
         (should-not hey--mark-read-token)))))
 
 (ert-deftest hey-mark-read-finalizer-before-failure-preserves-uncertainty ()
@@ -325,28 +351,29 @@
                   (funcall bad (make-hey-error :category 'configuration))
                   (funcall finish)))))
     (hey-mark-read)
-    (should (string-match-p "outcome unknown" (hey--mark-read-status-text)))
+    (hey-mark-test--assert-result "Read outcome unknown; refresh the list to check")
     (should-not hey--mark-read-token)))
 
 (ert-deftest hey-mark-read-owner-death-reports-unknown-in-surviving-view ()
-  (let ((one (generate-new-buffer " *hey-mark-owner*"))
-        (two (generate-new-buffer " *hey-mark-survivor*"))
-        finish)
-    (unwind-protect
-        (let ((backend `((hey-cli-mark-read
-                          . ,(lambda (_a _p _o _k _g _ok _bad &optional finalizer)
-                               (setq finish finalizer))))))
-          (with-current-buffer one (hey-mark-test--thread backend))
-          (with-current-buffer two (hey-mark-test--thread backend))
-          (with-current-buffer one (hey-mark-read))
-          (kill-buffer one)
-          (funcall finish)
-          (with-current-buffer two
-            (should (string-match-p "outcome unknown"
-                                    (hey--mark-read-status-text)))
-            (should (eq (hey-thread-seen hey--thread) 'unseen))))
-      (when (buffer-live-p one) (kill-buffer one))
-      (kill-buffer two))))
+  (hey-mark-test-with-messages
+    (let ((one (generate-new-buffer " *hey-mark-owner*"))
+          (two (generate-new-buffer " *hey-mark-survivor*"))
+          finish)
+      (unwind-protect
+          (let ((backend `((hey-cli-mark-read
+                            . ,(lambda (_a _p _o _k _g _ok _bad &optional finalizer)
+                                 (setq finish finalizer))))))
+            (with-current-buffer one (hey-mark-test--thread backend))
+            (with-current-buffer two (hey-mark-test--thread backend))
+            (with-current-buffer one (hey-mark-read))
+            (kill-buffer one)
+            (funcall finish)
+            (with-current-buffer two
+              (hey-mark-test--assert-result
+               "Read outcome unknown; refresh the list to check")
+              (should (eq (hey-thread-seen hey--thread) 'unseen))))
+        (when (buffer-live-p one) (kill-buffer one))
+        (kill-buffer two)))))
 
 (ert-deftest hey-mark-read-new-refresh-reports-newer-server-state ()
   (hey-mark-test-with-list
@@ -359,11 +386,11 @@
                . ,(lambda (_a _s _p _o _k _g ok _bad)
                     (funcall ok (hey-mark-test--envelope '("71") seen))))))
       (hey-mark-read)
-      (should (equal (hey--mark-read-status-text) "Read verified"))
+      (hey-mark-test--assert-result "Read verified")
       (setq seen nil)
       (hey-refresh)
       (should (eq (hey-posting-seen (car hey--records)) 'unseen))
-      (should (equal (hey--mark-read-status-text) "Server reports unread"))
+      (hey-mark-test--assert-result "Server reports unread")
       (setq hey--error (make-hey-error :category 'network) hey--stale t)
       (should (string-match-p "stale" (hey--status-header)))
       (should-not (string-match-p "Read verified" (hey--status-header))))))
@@ -409,10 +436,82 @@
                                                :message "Authentication failed."
                                                :hint "Run: hey auth login"))))))
     (hey-mark-read)
-    (should (string-match-p "Run: hey auth login"
-                            (hey--mark-read-status-text)))
+    (hey-mark-test--assert-result
+     "Mark read failed. Authentication failed. Run: hey auth login")
     (should (eq (hey-posting-seen (car hey--records)) 'unseen))
     (should-not hey--mark-read-token)))
+
+(ert-deftest hey-mark-read-thread-clears-progress-and-echoes-completion ()
+  (dolist (result '(success failure))
+    (hey-mark-test-with-messages
+      (with-temp-buffer
+        (let (success failure)
+          (hey-mark-test--thread
+           `((hey-cli-mark-read
+              . ,(lambda (_a _p _o _k _g ok bad &optional _finish)
+                   (setq success ok failure bad)))))
+          (hey-mark-read)
+          (should (string-match-p "Marking read" (hey--thread-header)))
+          (if (eq result 'success)
+              (progn
+                (funcall success '(("ok" . t)))
+                (hey-mark-test--assert-result "Read accepted; state not verified"))
+            (funcall failure (make-hey-error :category 'timeout))
+            (hey-mark-test--assert-result
+             "Read outcome unknown; refresh the list to check"))
+          (should-not (string-match-p "Marking read\\|Read accepted\\|outcome unknown"
+                                      (hey--thread-header))))))))
+
+(ert-deftest hey-mark-read-completion-preserves-another-threads-progress ()
+  (hey-mark-test-with-list
+    (let ((list-buffer (current-buffer))
+          (thread-buffer (generate-new-buffer " *hey-mark-second*"))
+          first-failure second-failure)
+      (unwind-protect
+          (progn
+            (setq hey--records (list (hey-mark-test--posting "71")
+                                     (hey-mark-test--posting "72"))
+                  hey--operation-overrides
+                  `((hey-cli-mark-read
+                     . ,(lambda (_a posting _o _k _g _ok bad &optional _finish)
+                          (if (equal posting "71")
+                              (setq first-failure bad)
+                            (setq second-failure bad))))))
+            (hey--render-list)
+            (hey-mark-read)
+            (let ((backend hey--operation-overrides))
+              (with-current-buffer thread-buffer
+                (hey-mark-test--thread backend "72")
+                (hey-mark-read)))
+            (funcall first-failure (make-hey-error :category 'timeout))
+            (with-current-buffer list-buffer
+              (should (string-match-p "Marking read" (hey--status-header)))
+              (should (equal hey--mark-read-status-target '("101" "72"))))
+            (funcall second-failure (make-hey-error :category 'timeout))
+            (dolist (buffer (list list-buffer thread-buffer))
+              (with-current-buffer buffer
+                (hey-mark-test--assert-result
+                 "Read outcome unknown; refresh the list to check"))))
+        (kill-buffer thread-buffer)))))
+
+(ert-deftest hey-mark-read-old-verification-preserves-a-new-writes-progress ()
+  (hey-mark-test-with-list
+    (let (write-success write-failure read-success)
+      (setq hey--operation-overrides
+            `((hey-cli-mark-read
+               . ,(lambda (_a _p _o _k _g ok bad &optional _finish)
+                    (setq write-success ok write-failure bad)))
+              (hey-cli-box-view
+               . ,(lambda (_a _s _p _o _k _g ok _bad)
+                    (setq read-success ok)))))
+      (hey-mark-read)
+      (funcall write-success '(("ok" . t)))
+      (hey-mark-read)
+      (funcall read-success (hey-mark-test--envelope '("71") t))
+      (should (string-match-p "Marking read" (hey--status-header)))
+      (should-not (member "Read verified" hey-mark-test--messages))
+      (funcall write-failure (make-hey-error :category 'timeout))
+      (hey-mark-test--assert-result "Read outcome unknown; refresh the list to check"))))
 
 
 (ert-deftest hey-mark-read-preserves-pending-source-and-account-choosers ()
@@ -442,8 +541,7 @@
         (should (eq hey--request 'picker-request))
         (should (zerop reads))
         (should (eq (hey-posting-seen (car hey--records)) 'seen))
-        (should (equal (hey--mark-read-status-text)
-                       "Read accepted; state not verified"))
+        (hey-mark-test--assert-result "Read accepted; state not verified")
         (cl-letf (((symbol-function 'completing-read)
                    (lambda (_prompt choices &rest _args)
                      (cl-incf prompts)

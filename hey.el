@@ -209,9 +209,9 @@ Copying and opening a link always use the complete destination."
 (defvar-local hey--mark-read-target nil
   "Account and posting identity captured for the pending explicit write.")
 (defvar-local hey--mark-read-status nil
-  "View identity paired with the explicit write's presentation text.")
+  "View identity paired with the pending write's presentation text.")
 (defvar-local hey--mark-read-status-target nil
-  "Posting identity described by the current explicit write status.")
+  "Posting identity retained for progress and later source observations.")
 (defvar-local hey--echoed-url nil
   "Body-link destination last shown in the echo area, suppressing repeats.")
 (defvar-local hey--origin nil)
@@ -1302,33 +1302,44 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
        (equal target (list (plist-get hey--thread-origin-context :account-id)
                            (plist-get hey--thread-origin-context :posting-id)))))
 
-(defun hey--mark-read-present (target backend text &optional seen)
+(defun hey--mark-read-present (target backend text &optional seen pending)
   "Present TEXT in views of TARGET using BACKEND, applying SEEN when non-nil.
+Keep TEXT in the header only while PENDING is non-nil.  Otherwise clear the
+header status and report TEXT in the echo area without logging it.
 Leave search rows unknown because search does not report read state."
-  (dolist (buffer (buffer-list))
-    (with-current-buffer buffer
-      (let ((postings (and (derived-mode-p 'hey-list-mode)
-                           (cl-remove-if-not
-                            (lambda (posting)
-                              (hey--posting-matches-target-p posting target))
-                            hey--records)))
-            (thread-p (hey--thread-matches-target-p target)))
-        (when (and (eq backend hey--operation-overrides)
-                   (or postings thread-p))
-          (when seen
-            (dolist (posting postings)
-              (unless (eq (hey-posting-seen posting) 'unknown)
-                (setf (hey-posting-seen posting) seen)))
-            (when thread-p
-              ;; This plist is also captured by an in-flight thread read.
-              ;; Updating it prevents that read from restoring older state.
-              (setf (plist-get hey--thread-origin-context :seen) seen)
-              (when (hey-thread-p hey--thread)
-                (setf (hey-thread-seen hey--thread) seen))))
-          (setq hey--mark-read-status (cons (hey--mark-read-context) text)
-                hey--mark-read-status-target target)
-          (when postings (hey--render-list t))
-          (force-mode-line-update))))))
+  (let (presented)
+    (dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (let ((postings (and (derived-mode-p 'hey-list-mode)
+                             (cl-remove-if-not
+                              (lambda (posting)
+                                (hey--posting-matches-target-p posting target))
+                              hey--records)))
+              (thread-p (hey--thread-matches-target-p target)))
+          (when (and (eq backend hey--operation-overrides)
+                     (or postings thread-p))
+            (setq presented t)
+            (when seen
+              (dolist (posting postings)
+                (unless (eq (hey-posting-seen posting) 'unknown)
+                  (setf (hey-posting-seen posting) seen)))
+              (when thread-p
+                ;; This plist is also captured by an in-flight thread read.
+                ;; Updating it prevents that read from restoring older state.
+                (setf (plist-get hey--thread-origin-context :seen) seen)
+                (when (hey-thread-p hey--thread)
+                  (setf (hey-thread-seen hey--thread) seen))))
+            ;; Finishing one thread must not clear another thread's progress.
+            (when (or pending (null hey--mark-read-status)
+                      (equal target hey--mark-read-status-target))
+              (setq hey--mark-read-status
+                    (and pending (cons (hey--mark-read-context) text))
+                    hey--mark-read-status-target target))
+            (when postings (hey--render-list t))
+            (force-mode-line-update)))))
+    (when (and presented (not pending))
+      (let ((message-log-max nil))
+        (message "%s" text)))))
 
 (defun hey--mark-read-pending-p (target backend)
   "Return non-nil when TARGET has a pending write using BACKEND."
@@ -1369,8 +1380,9 @@ Update read states in place, preserving pagination, row order, and point."
            (when (current-p)
              (with-current-buffer buffer
                (setq hey--request nil)
-               (hey--mark-read-present
-                target backend "Read accepted; refresh failed. Press g in the list."))))
+               (unless (hey--mark-read-pending-p target backend)
+                 (hey--mark-read-present
+                  target backend "Read accepted; refresh failed. Press g in the list.")))))
          (read-page ()
            (when (current-p)
              (with-current-buffer buffer
@@ -1413,13 +1425,14 @@ Update read states in place, preserving pagination, row order, and point."
                                                 observations))
                                               (seen (and fresh
                                                          (hey-posting-seen fresh))))
-                                         (hey--mark-read-present
-                                          target backend
-                                          (pcase seen
-                                            ('seen "Read verified")
-                                            ('unseen "Read accepted; server reports unread")
-                                            (_ "Read accepted; state not verified"))
-                                          seen))
+                                         (unless (hey--mark-read-pending-p target backend)
+                                           (hey--mark-read-present
+                                            target backend
+                                            (pcase seen
+                                              ('seen "Read verified")
+                                              ('unseen "Read accepted; server reports unread")
+                                              (_ "Read accepted; state not verified"))
+                                            seen)))
                                        (hey--render-list t))))))
                              (lambda (_error)
                                (setq finished t)
@@ -1523,7 +1536,7 @@ never marks it read.  An interrupted write may already have taken effect."
              (finish)))
         (unwind-protect
             (progn
-              (hey--mark-read-present target backend "Marking read…")
+              (hey--mark-read-present target backend "Marking read…" nil t)
               (condition-case error-data
                   (let ((request
                          (hey--call
@@ -1531,6 +1544,7 @@ never marks it read.  An interrupted write may already have taken effect."
                           (lambda (_envelope)
                             (when (and (not completed) (current-p))
                               (setq completed t)
+                              (finish)
                               (hey--mark-read-accepted target backend))
                             (finish))
                           #'failed #'finish)))

@@ -7,6 +7,8 @@
   rows after acknowledgment, and check read state without moving point.
 - Admit only the explicit mark-read operation through the mailbox mutation
   boundary. Exercise it with synthetic mail in tests and the demo.
+- Clear mark-read progress from the header when the write finishes. Report
+  outcomes in the echo area without logging them, as attachment saving does.
 - Show CLI recovery hints for failed mail reads and attachment operations.
   Keep download hints out of the message log.
 - Open http and https body links with `RET` through `browse-url`; show their
