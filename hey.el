@@ -439,6 +439,13 @@ cell's help text, except when the cell already carries its own help text."
               (list (hey-posting-key posting) (hey--row-vector posting now)))
             hey--records)))
 
+(defun hey--error-guidance (error fallback)
+  "Return ERROR's recovery hint, or FALLBACK when it is blank."
+  (let ((hint (hey-error-hint error)))
+    (if (and (stringp hint) (not (string-empty-p (string-trim hint))))
+        (string-trim hint)
+      fallback)))
+
 (defun hey--state-message ()
   "Return an actionable non-row message for the current list state."
   (cond
@@ -446,8 +453,9 @@ cell's help text, except when the cell already carries its own help text."
     (propertize "Loading HEY mail…" 'face 'hey-status-face))
    ((and hey--error (null hey--records))
     (propertize
-     (format "HEY could not load this source: %s\n\nPress g to retry."
-             (hey-error-message hey--error))
+     (format "HEY could not load this source: %s\n\n%s"
+             (hey-error-message hey--error)
+             (hey--error-guidance hey--error "Press g to retry."))
      'face 'hey-error-face))
    ((and hey--warnings (null hey--records))
     (propertize
@@ -461,8 +469,9 @@ cell's help text, except when the cell already carries its own help text."
      'face 'hey-status-face))
    ((and hey--error hey--stale)
     (propertize
-     (format "\nShowing stale results. Refresh failed: %s\nPress g to retry."
-             (hey-error-message hey--error))
+     (format "\nShowing stale results. Refresh failed: %s\n%s"
+             (hey-error-message hey--error)
+             (hey--error-guidance hey--error "Press g to retry."))
      'face 'hey-error-face))
    ((and hey--warnings (hey-source-exhausted hey--source))
     (propertize
@@ -1192,8 +1201,10 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                    (with-current-buffer buffer
                      (setq hey--loading nil hey--error error hey--request nil)
                      (hey--render-thread-state
-                      (format "HEY could not load this thread: %s"
-                              (hey-error-message error))
+                      (format "HEY could not load this thread: %s\n\n%s"
+                              (hey-error-message error)
+                              (hey--error-guidance
+                               error "Return to the list and reopen the thread to retry."))
                       'hey-error-face))))))))
     (hey-display-buffer buffer intent)))
 
@@ -1521,7 +1532,8 @@ Ignore lookup errors to keep this `post-command-hook' function active."
       (when (and (not hey--loading) (not hey--error) (not hey--attachments))
         (insert "\nNo attachments found.\n"))
       (when hey--error
-        (insert "\n" (hey-error-message hey--error) " Press g to retry.\n"))
+        (insert "\n" (hey-error-message hey--error) "\n"
+                (hey--error-guidance hey--error "Press g to retry.") "\n"))
       (dolist (notice (append (when hey--attachment-notice
                                 (list hey--attachment-notice))
                               hey--warnings))
@@ -1675,7 +1687,8 @@ Ignore lookup errors to keep this `post-command-hook' function active."
             hey--attachment-save-token nil
             hey--attachment-save-status nil)
       (force-mode-line-update)
-      (message "%s" status))))
+      (let ((message-log-max nil))
+        (message "%s" status)))))
 
 (defun hey--start-attachment-save (attachment destination)
   "Download ATTACHMENT to validated DESTINATION with private staging."
@@ -1738,7 +1751,8 @@ Ignore lookup errors to keep this `post-command-hook' function active."
                     (pcase (hey-error-category error)
                       ('canceled "Attachment download canceled.")
                       ('timeout "Attachment download timed out; retry saving.")
-                      (_ "Attachment download failed; retry saving."))))
+                      (_ (format "Attachment download failed. %s"
+                                 (hey--error-guidance error "Retry saving."))))))
                  finish))
           (setq handed-off t))
       (unless handed-off

@@ -102,6 +102,9 @@ Both list and thread buffers provide `b` to open the corresponding HEY URL,
 to the official HEY application, where you can reply or make other mailbox
 changes.
 
+Failed requests show the CLI's recovery hint when available, such as signing
+in again or waiting for a rate limit to clear.
+
 ## Saving attachments
 
 Press `A` in a loaded thread to see its attachments, then `s` or `RET` to
@@ -136,23 +139,6 @@ Faces inherit from the active theme. Customize `hey-unseen-face`,
 `hey-thread-subject-face` for thread headings, and the `hey-header-*` faces
 for header elements. Unseen and collection markers convey meaning alongside
 color. Set `hey-highlight-current-row` to nil to disable the row highlight.
-
-## Privacy
-
-`hey.el` reads mailbox and application state without changing it. Saving an
-attachment writes a local file at your request. The package adds no mail
-body cache, does not persist search text, and neither accepts nor stores
-bearer tokens.
-
-The package never fetches body links or previews their destinations.
-Opening a link delegates to `browse-url`. Echoed link destinations stay out
-of the `*Messages*` log.
-
-The CLI manages its own authentication and operational files. It can refresh
-or migrate credentials, create an installation ID, update its HTTP cache,
-record its last-run version, refresh CLI-owned agent skills after an upgrade,
-and remove stale self-upgrade files and locks. Read-only access to your
-mailbox does not prevent these CLI-owned writes.
 
 ## Development
 

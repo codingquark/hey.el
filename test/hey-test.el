@@ -270,6 +270,62 @@
       (should (eq (get-text-property stale-start 'face header)
                   'hey-header-error-face)))))
 
+(ert-deftest hey-ui-list-errors-show-recovery-hints-with-and-without-stale-rows ()
+  (dolist (case hey-test-recovery-cases)
+    (dolist (stale '(nil t))
+      (hey-test-with-fake (list :scenario (car case))
+        (hey-test-with-list
+          (let ((records
+                 (and stale
+                      (plist-get
+                       (hey-model-normalize-postings
+                        (hey-test--postings-envelope
+                         (list (hey-test--posting 501 901 "Retained row")))
+                        hey--source)
+                       :value))))
+            (setq hey--records records)
+            (hey-refresh)
+            (hey-test-await (lambda () (not hey--loading)))
+            (should (eq hey--records records))
+            (should (eq hey--stale stale))
+            (should (string-match-p (regexp-quote (nth 2 case)) (buffer-string)))
+            (should-not (string-match-p "Press g to retry" (buffer-string)))
+            (when stale
+              (should (string-match-p "Showing stale results" (buffer-string))))))))))
+
+(ert-deftest hey-ui-list-errors-without-hints-keep-retry-guidance ()
+  (dolist (hint '(nil "" " \t " 123))
+    (hey-test-with-list
+      (setq hey--error (make-hey-error :category 'network :message "Offline"
+                                      :hint hint))
+      (hey--render-list)
+      (should (string-match-p "Offline\n\nPress g to retry\\." (buffer-string))))))
+
+(ert-deftest hey-ui-thread-errors-show-recovery-hints ()
+  (dolist (case hey-test-recovery-cases)
+    (hey-test-with-fake (list :scenario (car case))
+      (save-window-excursion
+        (hey-test-with-list
+          (let ((posting
+                 (car (plist-get
+                       (hey-model-normalize-postings
+                        (hey-test--postings-envelope
+                         (list (hey-test--posting 501 901 "Unavailable thread")))
+                        hey--source)
+                       :value)))
+                thread-buffer)
+            (unwind-protect
+                (progn
+                  (hey--open-thread posting 'same-window)
+                  (setq thread-buffer (current-buffer))
+                  (hey-test-await (lambda () (not hey--loading)))
+                  (should (derived-mode-p 'hey-thread-mode))
+                  (should (string-match-p "HEY could not load this thread"
+                                          (buffer-string)))
+                  (should (string-match-p (regexp-quote (nth 2 case))
+                                          (buffer-string))))
+              (when (buffer-live-p thread-buffer) (kill-buffer thread-buffer)))))))))
+
 (ert-deftest hey-ui-malformed-empty-response-is-not-presented-as-empty-mail ()
   (hey-test-with-list
     (setq hey--operation-overrides

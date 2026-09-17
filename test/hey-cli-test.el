@@ -226,6 +226,21 @@ the retry instruction."
                 (should (equal (hey-error-code failure) "synthetic_failure")))
             (when (buffer-live-p owner) (kill-buffer owner))))))))
 
+(ert-deftest hey-cli-transport-preserves-sanitized-recovery-hints ()
+  (dolist (case hey-test-recovery-cases)
+    (hey-test-with-fake (list :scenario (car case))
+      (with-temp-buffer
+        (let (failure)
+          (hey-cli-test--start-version
+           (current-buffer) (lambda (_value) (ert-fail "Expected a CLI error"))
+           (lambda (error) (setq failure error)))
+          (hey-test-await (lambda () failure))
+          (should (eq (hey-error-category failure) (nth 1 case)))
+          (should (equal (hey-error-hint failure) (nth 2 case)))
+          (with-current-buffer "*hey-log*"
+            (should-not (string-match-p (regexp-quote (nth 2 case))
+                                       (buffer-string)))))))))
+
 (ert-deftest hey-cli-transport-allows-success-with-redacted-stderr-note ()
   (hey-test-with-fake '(:scenario "stderr-success")
     (when (get-buffer "*hey-log*") (kill-buffer "*hey-log*"))

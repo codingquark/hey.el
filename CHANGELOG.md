@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show CLI recovery hints for failed mail reads and attachment operations.
+  Keep download hints out of the message log.
 - Open http and https body links with `RET` through `browse-url`; show their
   destinations with `l` and copy them with `c`. Root-relative links resolve
   to the official HEY origin; non-web schemes stay inert. The `b` and `y`

@@ -1,0 +1,1 @@
+{"ok":false,"error":"HEY refused the stored refresh token. The stored credentials have been cleared","code":"auth","hint":"Run:\u001b[31m hey auth login\u001b[0m\u202e"}

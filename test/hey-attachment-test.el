@@ -88,6 +88,17 @@
       (let ((rows (mapcar #'hey--attachment-row hey--attachments)))
         (should (hey--attachment-size-less-p (nth 2 rows) (car rows)))))))
 
+(ert-deftest hey-attachment-list-errors-show-recovery-hints ()
+  (dolist (case hey-test-recovery-cases)
+    (hey-test-with-fake (list :scenario (car case))
+      (with-temp-buffer
+        (hey-attachment-mode)
+        (setq hey--attachment-thread (hey-attachment-test--thread))
+        (hey-refresh-attachments)
+        (hey-test-await (lambda () (not hey--loading)))
+        (should (string-match-p (regexp-quote (nth 2 case)) (buffer-string)))
+        (should-not (string-match-p "Press g to retry" (buffer-string)))))))
+
 (ert-deftest hey-attachment-list-is-on-demand-and-reused ()
   (save-window-excursion
     (let ((thread-buffer (generate-new-buffer " *attachment-origin*"))
@@ -177,7 +188,7 @@
                    (pcase kind
                      ('cancel "Attachment download canceled.")
                      ('timeout "Attachment download timed out; retry saving.")
-                     ('failure "Attachment download failed; retry saving.")
+                     ('failure "Attachment download failed. Use the synthetic success scenario")
                      (_ "Attachment could not be verified or saved; choose another destination."))
                    messages)))
         (should-not hey--attachment-save-status)
@@ -185,6 +196,25 @@
                                      (hey--attachment-header)))
         (should-not (file-exists-p destination))
         (should-not (hey-attachment-test--staging))))))
+
+(ert-deftest hey-attachment-save-errors-show-hints-without-logging-them ()
+  (dolist (case hey-test-recovery-cases)
+    (hey-attachment-test--with-save (car case)
+      (let (messages)
+        (cl-letf (((symbol-function 'message)
+                   (lambda (format-string &rest args)
+                     (when format-string
+                       (push (cons (apply #'format format-string args)
+                                   message-log-max)
+                             messages)))))
+          (hey--start-attachment-save (hey-attachment-test--file) destination)
+          (hey-test-await (lambda () (not hey--attachment-save-token))))
+        (let ((reported (assoc (concat "Attachment download failed. " (nth 2 case))
+                               messages)))
+          (should reported)
+          (should-not (cdr reported))))
+      (should-not (file-exists-p destination))
+      (should-not (hey-attachment-test--staging)))))
 
 (ert-deftest hey-attachment-save-buffer-death-cleans-staging ()
   (hey-attachment-test--with-save "attachment-delay"

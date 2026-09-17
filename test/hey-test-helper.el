@@ -24,6 +24,12 @@
 (defvar hey-test-record-file nil)
 (defvar hey-test-working-directory nil)
 
+(defconst hey-test-recovery-cases
+  '(("auth-refused" auth "Run: hey auth login")
+    ("refresh-rate-limited" rate-limit
+     "Wait for the limit to clear, then run the command again"))
+  "Fake scenarios with their expected error categories and recovery hints.")
+
 (defun hey-test-assert-exact-fake (candidate)
   "Fail unless CANDIDATE is the checked-in, non-symlink fake executable."
   (unless (and (stringp candidate)

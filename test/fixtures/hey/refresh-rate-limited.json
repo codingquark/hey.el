@@ -1,0 +1,1 @@
+{"ok":false,"error":"HEY is rate-limiting token requests — not asking again for 42s","code":"rate_limit","hint":"Wait for the limit to clear, then run the command again"}
