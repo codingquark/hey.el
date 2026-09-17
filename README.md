@@ -72,9 +72,10 @@ In the mail list, the following keys are available:
 | `L` | `hey-choose-label` | Choose a label |
 | `C` | `hey-choose-collection` | Choose a collection |
 | `/` | `hey-search` | Search the current account |
-| `RET` | `hey-follow-link` | Open link at point |
-| `l` | `hey-show-link` | Show the link destination in the echo area |
-| `c` | `hey-copy-link` | Copy the link destination |
+
+When more results are available, the list also has a `[Load more]` button.
+Activate it with `RET` or mouse-2. Opening a bundle shows its contact's seen
+and unseen mail when available.
 
 The header counts unread entries among the displayed results: `3/20` means
 three unread out of twenty displayed. Search results have unknown read state
@@ -83,6 +84,12 @@ seen only when the CLI explicitly reports it as seen.
 
 In a thread, `n` and `p` move between messages, `SPC` and `DEL` scroll, and
 `A` lists the thread's attachments. The following keys act on body links:
+
+| Key | Command | Action |
+| --- | --- | --- |
+| `RET` | `hey-follow-link` | Open the link at point |
+| `l` | `hey-show-link` | Show the link destination in the echo area |
+| `c` | `hey-copy-link` | Copy the link destination |
 
 The destination also appears when point enters a link. Long echo previews
 end with an ellipsis; copying and opening always use the complete destination.
