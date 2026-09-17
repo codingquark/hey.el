@@ -1,9 +1,9 @@
 # hey.el — Read HEY mail in Emacs
 
-`hey.el` is a read-only interface to [HEY](https://www.hey.com/) through its
+`hey.el` is an Emacs interface to [HEY](https://www.hey.com/) through its
 [official CLI](https://github.com/basecamp/hey-cli). Browse boxes, bundles,
-labels, and collections; search mail; read threads; and save attachments.
-Opening a thread leaves its read state unchanged.
+labels, and collections; search mail; read threads; mark mail read; and save
+attachments. Opening a thread leaves its read state unchanged.
 
 - Package name: `hey`
 - [Source code and issues](https://github.com/codingquark/hey.el)
@@ -64,6 +64,7 @@ In the mail list, the following keys are available:
 | --- | --- | --- |
 | `RET` | `hey-open` | Open the entry in this window |
 | `o` | `hey-open-other-window` | Open the entry in another window |
+| `r` | `hey-mark-read` | Mark the selected thread read |
 | `n` / `p` | `hey-next-row` / `hey-previous-row` | Move between entries |
 | `g` | `hey-refresh` | Fetch the list again from its first page |
 | `M` | `hey-load-more` | Load the next page |
@@ -80,10 +81,11 @@ and unseen mail when available.
 The header counts unread entries among the displayed results: `3/20` means
 three unread out of twenty displayed. Search results have unknown read state
 and show `?/20`; an empty list shows `0/0`. Outside search, mail counts as
-seen only when the CLI explicitly reports it as seen.
+seen when the CLI reports it as seen or accepts an explicit mark-read request.
 
-In a thread, `n` and `p` move between messages, `SPC` and `DEL` scroll, and
-`A` lists the thread's attachments. The following keys act on body links:
+In a thread, `n` and `p` move between messages, `SPC` and `DEL` scroll,
+`r` marks the thread read, and `A` lists its attachments. The following keys
+act on body links:
 
 | Key | Command | Action |
 | --- | --- | --- |
@@ -104,6 +106,24 @@ changes.
 
 Failed requests show the CLI's recovery hint when available, such as signing
 in again or waiting for a rate limit to clear.
+
+## Marking mail read
+
+Press `r` in a list or thread buffer to mark that thread read. The command
+acts on the whole thread, keeps point in place, and asks for no confirmation.
+Opening or scrolling a thread never marks it read.
+
+Open a bundle before marking one of its threads. Search results support
+marking when HEY supplies a posting ID; their displayed read state remains
+unknown because search does not report it.
+
+The interface shows progress while the request runs. After HEY accepts the
+change, matching list rows and unread counts update. Open lists that report
+read state fetch their loaded pages to check the result; the status distinguishes
+an accepted change from a verified read state. A failed check does not undo
+the accepted change. A timeout or interrupted request may already have reached
+HEY; refresh before trying again. The package never retries a mark-read request
+automatically.
 
 ## Saving attachments
 
@@ -148,12 +168,12 @@ Run the full check before submitting a change:
 make check
 ```
 
-This runs tests, byte compilation, lint, the read-operation audit, packaging,
+This runs tests, byte compilation, lint, the operation-boundary audit, packaging,
 and a clean installation check. Tests use synthetic fixtures and the
 repository's fake CLI. A missing fake is an error; tests never fall back to
 an installed `hey`. CLI compatibility is checked against its source and
-fixtures. Authenticated validation is a separate human check, and attachment
-user testing remains outstanding.
+fixtures. Authenticated validation is a separate human check; attachment and
+mark-read user testing remain outstanding.
 
 `make bootstrap` installs checksum-pinned `markdown-mode` 2.8 and
 `package-lint` 0.26 under `test/tmp`. To use an existing Markdown installation,
@@ -162,10 +182,10 @@ set `MARKDOWN_MODE_ARCHIVE` and `PACKAGE_LINT_ARCHIVE` to the archives specified
 in `tools/bootstrap.el`; checksum verification still applies. Set `EMACS` to
 choose an Emacs executable.
 
-Individual targets are `test`, `compile`, `lint`, `read-only-check`, `package`,
-and `install-check`. The package archive in `dist/` contains the three runtime
-libraries, `LICENSE`, and a generated `hey-pkg.el` derived from the headers in
-`hey.el`.
+Individual targets are `test`, `compile`, `lint`, `operation-check`, `package`,
+and `install-check`; `read-only-check` remains an alias for `operation-check`.
+The package archive in `dist/` contains the three runtime libraries,
+`LICENSE`, and a generated `hey-pkg.el` derived from the headers in `hey.el`.
 
 To try the interface with sample mail, run this from the checkout after
 `make bootstrap`:
@@ -176,7 +196,8 @@ emacs -Q -L test/tmp/elpa/markdown-mode-2.8 -L . \
 ```
 
 The demo needs no HEY installation or credentials and uses no subprocesses or
-network. It lists sample attachments but does not save them.
+network. Marking read changes only the demo's sample mail. It lists sample
+attachments but does not save them.
 
 Read [AGENTS.md](AGENTS.md) for contribution guidelines. Include Emacs and
 HEY CLI versions in bug reports, and use synthetic or sanitized examples

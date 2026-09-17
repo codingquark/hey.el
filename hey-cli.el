@@ -11,8 +11,8 @@
 ;;; Commentary:
 
 ;; Build closed HEY commands and run them asynchronously.  Only named
-;; operations may start a subprocess.  Attachment saving writes a local file;
-;; no operation changes mailbox state.
+;; operations may start a subprocess.  Marking a posting read is the sole
+;; mailbox mutation.  Attachment saving writes a user-selected local file.
 
 ;;; Code:
 
@@ -76,7 +76,7 @@ Attachment discovery and download isolation require version 1.4.3.")
 (defconst hey-cli--removed-environment-variables
   '("HEY_TOKEN" "HEY_BASE_URL" "HEY_ACCOUNT_ID" "HEY_DEBUG" "HEY_THEME"
     "HEY_CABLE_URL" "HEY_SETUP_AGENT")
-  "Inherited HEY variables that must not affect reader requests.")
+  "Inherited HEY variables that must not affect package requests.")
 
 (defvar hey-cli--process-counter 0)
 
@@ -125,6 +125,16 @@ validator because its query follows `--'."
     (unless (and (integerp page) (> page 0))
       (user-error "Search page must be a positive integer"))
     (number-to-string page)))
+
+(defun hey-cli--posting-id (value)
+  "Return VALUE as one canonical positive signed 64-bit posting ID."
+  (unless (and (stringp value)
+               (string-match-p "\\`[1-9][0-9]*\\'" value)
+               (or (< (length value) 19)
+                   (and (= (length value) 19)
+                        (not (string< "9223372036854775807" value)))))
+    (user-error "Posting ID must be one positive decimal signed 64-bit integer"))
+  value)
 
 (defun hey-cli--base-argv ()
   "Return the fixed global argv prefix."
@@ -208,6 +218,12 @@ always positional data."
            (list "thread" "read"
                  (hey-cli--positional-string topic-id "Topic ID")
                  "--allow-partial"))))
+
+(defun hey-cli-build-mark-read (account-id posting-id)
+  "Build argv for marking POSTING-ID read in ACCOUNT-ID."
+  (hey-cli--finish-argv
+   (append (hey-cli--account-argv account-id)
+           (list "seen" (hey-cli--posting-id posting-id)))))
 
 (defun hey-cli-build-attachment-list (account-id topic-id)
   "Build argv for listing attachments in ACCOUNT-ID and TOPIC-ID."
@@ -701,7 +717,8 @@ CATEGORY and EXIT-STATUS are used only for redacted diagnostics."
   "Cancel an asynchronous HEY REQUEST.
 
 Its failure callback receives a `hey-error' in the `canceled' category when
-the owner buffer is still live."
+the owner buffer is still live.  Cancellation cannot undo a mailbox change
+that the server has already applied."
   (when (and (hey-cli--request-p request)
              (not (hey-cli--request-completed request)))
     (setf (hey-cli--request-canceled request) t)
@@ -728,7 +745,7 @@ the operating system may otherwise be naming the working directory."
 
 (defun hey-cli--start-process
     (operation argv owner source-key generation success failure &optional finalizer)
-  "Start one closed read OPERATION with ARGV for OWNER.
+  "Start one closed OPERATION with ARGV for OWNER.
 
 SOURCE-KEY and GENERATION are retained with the request so the UI can pair the
 returned request with its immutable session state.  SUCCESS receives a parsed
@@ -826,6 +843,27 @@ resources after the process stops, even when callbacks cannot run."
 ;; after its operation-specific arguments.  SUCCESS receives a parsed JSON
 ;; envelope; FAILURE receives a `hey-error'.  The UI normalizes the result
 ;; and checks source/generation before committing it.
+
+(defun hey-cli-mark-read
+    (account-id posting-id owner source-key generation success failure
+                &optional finalizer)
+  "Mark POSTING-ID read in ACCOUNT-ID for OWNER.
+Pair SUCCESS or FAILURE with SOURCE-KEY and GENERATION.  SUCCESS receives
+only the CLI acknowledgment; it does not verify the current read state.
+Run FINALIZER once after the process stops, including failed setup and
+owner death."
+  (let (finalized request)
+    (let ((finish (lambda ()
+                    (unless finalized
+                      (setq finalized t)
+                      (when finalizer (funcall finalizer))))))
+      (unwind-protect
+          (setq request
+                (hey-cli--start-process
+                 'mark-read (hey-cli-build-mark-read account-id posting-id)
+                 owner source-key generation success failure finish))
+        (unless request (funcall finish)))
+      request)))
 
 (defun hey-cli-attachment-list
     (account-id topic-id owner source-key generation success failure)

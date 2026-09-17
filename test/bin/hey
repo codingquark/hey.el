@@ -30,6 +30,10 @@ if [ -n "$record" ]; then
 fi
 
 case $scenario in
+  mark-read|mark-read-delay)
+    [ "$scenario" != mark-read-delay ] || sleep 2
+    cat "$fixture_dir/mark-read-success.json"
+    ;;
   auth-refused)
     cat "$fixture_dir/auth-refused.json" >&2
     exit 3

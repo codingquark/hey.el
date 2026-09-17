@@ -69,41 +69,70 @@
     ,@(when topic
         `(("app_url" . ,(format "https://app.hey.com/topics/%s" topic))))))
 
+(defun hey-demo--apply-seen (seen-postings envelope)
+  "Apply SEEN-POSTINGS to the sample postings in ENVELOPE."
+  (dolist (posting (alist-get "postings" (alist-get "data" envelope
+                                                 nil nil #'equal)
+                             nil nil #'equal))
+    (when (gethash (number-to-string (alist-get "id" posting nil nil #'equal))
+                   seen-postings)
+      (setf (alist-get "seen" posting nil nil #'equal) t)))
+  envelope)
+
 (defun hey-demo--postings
-    (_account source page _owner _key _generation success _failure)
-  "Fake a named cursor source read for SOURCE and PAGE, then call SUCCESS."
+    (seen-postings _account source page _owner _key _generation success _failure)
+  "Read sample SOURCE at PAGE using SEEN-POSTINGS, then call SUCCESS."
   (hey-demo--deliver
    success
-   (if page
-       `(("ok" . t)
-         ("data" ("postings"
-                  ,(hey-demo--posting 504 904 "Second page: release notes"
-                                      "Release Bot" t))))
-     `(("ok" . t)
-       ("data" ("next_page" . "demo-page-2")
-        ("postings"
-         ,(hey-demo--posting 501 901 "Design review moved"
-                             "Alice Example" 'hey-json-false)
-         ,(hey-demo--posting 502 nil "Build reports • status report"
-                             "CI Bot" nil "bundle")
-         ,(hey-demo--posting 503 903
-                             (format "%s update" (capitalize source))
-                             "Basecamp" t)))))))
+   (hey-demo--apply-seen
+    seen-postings
+    (if page
+        `(("ok" . t)
+          ("data" ("postings"
+                   ,(hey-demo--posting 504 904 "Second page: release notes"
+                                       "Release Bot" t))))
+      `(("ok" . t)
+        ("data" ("next_page" . "demo-page-2")
+         ("postings"
+          ,(hey-demo--posting 501 901 "Design review moved"
+                              "Alice Example" 'hey-json-false)
+          ,(hey-demo--posting 502 nil "Build reports • status report"
+                              "CI Bot" nil "bundle")
+          ,(hey-demo--posting 503 903
+                              (format "%s update" (capitalize source))
+                              "Basecamp" t))))))))
 
 (defun hey-demo--bundle
-    (account posting-id page owner key generation success failure)
-  "Fake bundle POSTING-ID in ACCOUNT at PAGE for OWNER.
+    (seen-postings account posting-id page owner key generation success failure)
+  "Read sample bundle POSTING-ID in ACCOUNT at PAGE for OWNER.
 
-Delegate with KEY and GENERATION, delivering to SUCCESS or FAILURE."
+Apply SEEN-POSTINGS and deliver with KEY and GENERATION to SUCCESS or FAILURE."
   (ignore account posting-id page owner key generation failure)
   (hey-demo--deliver
    success
-   `(("ok" . t)
-     ("data" ("postings"
-              ,(hey-demo--posting 510 910 "Build completed"
-                                  "CI Bot" t)
-              ,(hey-demo--posting 511 911 "Status report"
-                                  "Release Bot" t))))))
+   (hey-demo--apply-seen
+    seen-postings
+    `(("ok" . t)
+      ("data" ("postings"
+               ,(hey-demo--posting 510 910 "Build completed"
+                                   "CI Bot" t)
+               ,(hey-demo--posting 511 911 "Status report"
+                                   "Release Bot" t)))))))
+
+(defun hey-demo--mark-read
+    (seen-postings _account posting-id _owner _key _generation
+                   success _failure &optional finalizer)
+  "Record POSTING-ID in SEEN-POSTINGS and acknowledge through SUCCESS.
+Run FINALIZER after the synthetic request completes."
+  (run-at-time
+   0 nil
+   (lambda ()
+     (unwind-protect
+         (progn
+           (puthash posting-id t seen-postings)
+           (funcall success '(("ok" . t))))
+       (when finalizer (funcall finalizer)))))
+  nil)
 
 (defun hey-demo--search
     (_account query page _owner _key _generation success _failure)
@@ -167,24 +196,31 @@ Delegate with KEY and GENERATION, delivering to SUCCESS or FAILURE."
 (defun hey-demo ()
   "Open the complete HEY reader with an asynchronous synthetic backend."
   (interactive)
-  (let ((buffer (get-buffer-create "*HEY demo*")))
+  (let ((buffer (get-buffer-create "*HEY demo*"))
+        (seen-postings (make-hash-table :test #'equal)))
     (with-current-buffer buffer
       (hey-list-mode)
       (setq hey--operation-overrides
-            '((hey-cli-version . hey-demo--version)
+            `((hey-cli-version . hey-demo--version)
               (hey-cli-auth-status . hey-demo--auth)
               (hey-cli-account-list . hey-demo--accounts)
               (hey-cli-box-list . hey-demo--boxes)
-              (hey-cli-box-view . hey-demo--postings)
-              (hey-cli-bundle-view . hey-demo--bundle)
+              (hey-cli-box-view . ,(apply-partially #'hey-demo--postings
+                                                   seen-postings))
+              (hey-cli-bundle-view . ,(apply-partially #'hey-demo--bundle
+                                                      seen-postings))
               (hey-cli-search . hey-demo--search)
               (hey-cli-thread-read . hey-demo--thread)
+              (hey-cli-mark-read . ,(apply-partially #'hey-demo--mark-read
+                                                    seen-postings))
               (hey-cli-attachment-list . hey-demo--attachments)
               (hey-cli-attachment-save . hey-demo--save-attachment)
               (hey-cli-label-list . hey-demo--labels)
-              (hey-cli-label-view . hey-demo--postings)
+              (hey-cli-label-view . ,(apply-partially #'hey-demo--postings
+                                                     seen-postings))
               (hey-cli-collection-list . hey-demo--collections)
-              (hey-cli-collection-view . hey-demo--postings)))
+              (hey-cli-collection-view . ,(apply-partially #'hey-demo--postings
+                                                          seen-postings))))
       (let ((hey-account nil))
         (hey--start-session)))
     (hey-display-buffer buffer 'same-window)))

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Mark one thread read with `r` in list and thread buffers. Keep opening a
+  thread free of mailbox changes. Retain posting identity, update matching
+  rows after acknowledgment, and check read state without moving point.
+- Admit only the explicit mark-read operation through the mailbox mutation
+  boundary. Exercise it with synthetic mail in tests and the demo.
 - Show CLI recovery hints for failed mail reads and attachment operations.
   Keep download hints out of the message log.
 - Open http and https body links with `RET` through `browse-url`; show their

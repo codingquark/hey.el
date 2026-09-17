@@ -90,7 +90,7 @@ sources such as search which do not."
 
 (cl-defstruct hey-thread
   "A normalized HEY thread assembled from entries and origin context."
-  account-id account-name topic-id subject source-title senders labels
+  account-id account-name topic-id posting-id seen subject source-title senders labels
   labels-known-p collections collections-known-p entries app-url notice)
 
 (cl-defstruct hey-error
@@ -726,6 +726,7 @@ and `:warnings'.  Preserve SOURCE."
   "Normalize flat thread-entry ENVELOPE using normalized origin CONTEXT.
 
 CONTEXT is a plist with `:account-id', `:account-name', `:topic-id',
+`:posting-id', `:seen',
 `:subject', `:source-title', `:labels', `:labels-known-p', `:collections',
 and `:collections-known-p'.  Unknown memberships remain distinct from empty
 ones.  Preserve entry order; timestamps never reorder messages.
@@ -754,6 +755,10 @@ Return `:value' as one `hey-thread' and non-fatal `:warnings'."
         :account-id (hey-model--account-id-string (plist-get context :account-id))
         :account-name (hey-model--clean-string (plist-get context :account-name))
         :topic-id (hey-model--id-string (plist-get context :topic-id))
+        :posting-id (hey-model--id-string (plist-get context :posting-id))
+        :seen (if (memq (plist-get context :seen) '(seen unseen))
+                  (plist-get context :seen)
+                'unknown)
         :subject (hey-model--clean-string (plist-get context :subject))
         :source-title (hey-model--clean-string (plist-get context :source-title))
         :senders (nreverse senders)
