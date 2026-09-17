@@ -118,10 +118,10 @@ marking when HEY supplies a posting ID; their displayed read state remains
 unknown because search does not report it.
 
 The header shows progress while the request runs and clears it when the write
-finishes. Results appear in the echo area without entering the message log.
+finishes. Successful requests stay quiet. Errors appear in the echo area
+without entering the message log.
 After HEY accepts the change, matching list rows and unread counts update.
-Open lists that report read state fetch their loaded pages to check the result;
-the echo area distinguishes an accepted change from a verified read state.
+Open lists that report read state fetch their loaded pages to check the result.
 A failed check does not undo the accepted change. A timeout or interrupted
 request may already have reached HEY; refresh before trying again. The package
 never retries a mark-read request automatically.

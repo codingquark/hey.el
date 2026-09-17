@@ -720,8 +720,7 @@ the named operation's result."
                              hey--request nil
                              hey--last-refreshed (current-time))
                        (dolist (target hey--read-acknowledgements)
-                         (hey--mark-read-present
-                          target backend "Read accepted; state not verified"))
+                         (hey--mark-read-present target backend nil))
                        (when (and mark-target
                                   (not (member mark-target
                                                hey--read-acknowledgements))
@@ -1305,7 +1304,8 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
 (defun hey--mark-read-present (target backend text &optional seen pending)
   "Present TEXT in views of TARGET using BACKEND, applying SEEN when non-nil.
 Keep TEXT in the header only while PENDING is non-nil.  Otherwise clear the
-header status and report TEXT in the echo area without logging it.
+header status and echo non-nil TEXT without logging it.  Use nil for TEXT
+to update the views silently.
 Leave search rows unknown because search does not report read state."
   (let (presented)
     (dolist (buffer (buffer-list))
@@ -1337,7 +1337,7 @@ Leave search rows unknown because search does not report read state."
                     hey--mark-read-status-target target))
             (when postings (hey--render-list t))
             (force-mode-line-update)))))
-    (when (and presented (not pending))
+    (when (and presented text (not pending))
       (let ((message-log-max nil))
         (message "%s" text)))))
 
@@ -1351,16 +1351,13 @@ Leave search rows unknown because search does not report read state."
    (buffer-list)))
 
 (defun hey--mark-read-observe (target backend postings)
-  "Report TARGET's independently fetched read state in POSTINGS from BACKEND."
+  "Apply TARGET's independently fetched read state in POSTINGS from BACKEND."
   (let* ((posting (cl-find-if
                    (lambda (row) (hey--posting-matches-target-p row target))
                    postings))
          (seen (and posting (hey-posting-seen posting))))
     (when (memq seen '(seen unseen))
-      (hey--mark-read-present target backend
-                              (if (eq seen 'seen) "Read verified"
-                                "Server reports unread")
-                              seen))))
+      (hey--mark-read-present target backend nil seen))))
 
 (defun hey--mark-read-reconcile (target backend)
   "Check TARGET using BACKEND against the loaded pages of this list.
@@ -1428,10 +1425,8 @@ Update read states in place, preserving pagination, row order, and point."
                                          (unless (hey--mark-read-pending-p target backend)
                                            (hey--mark-read-present
                                             target backend
-                                            (pcase seen
-                                              ('seen "Read verified")
-                                              ('unseen "Read accepted; server reports unread")
-                                              (_ "Read accepted; state not verified"))
+                                            (when (eq seen 'unseen)
+                                              "Read accepted; server reports unread")
                                             seen)))
                                        (hey--render-list t))))))
                              (lambda (_error)
@@ -1462,7 +1457,7 @@ Update read states in place, preserving pagination, row order, and point."
                                 (hey--posting-matches-target-p posting target))
                               hey--records))
             (push buffer lists)))))
-    (hey--mark-read-present target backend "Read accepted; state not verified" 'seen)
+    (hey--mark-read-present target backend nil 'seen)
     (dolist (buffer lists)
       (with-current-buffer buffer (hey--mark-read-reconcile target backend)))))
 
