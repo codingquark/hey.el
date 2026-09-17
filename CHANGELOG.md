@@ -9,6 +9,8 @@
   boundary. Exercise it with synthetic mail in tests and the demo.
 - Clear mark-read progress from the header when the write finishes. Keep
   successful requests quiet and report errors in the echo area without logging.
+- Redraw only rows whose read state changes. Check loaded pages until all
+  pending targets have a read state, preserving point and pagination.
 - Show CLI recovery hints for failed mail reads and attachment operations.
   Keep download hints out of the message log.
 - Open http and https body links with `RET` through `browse-url`; show their

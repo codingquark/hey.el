@@ -121,7 +121,8 @@ The header shows progress while the request runs and clears it when the write
 finishes. Successful requests stay quiet. Errors appear in the echo area
 without entering the message log.
 After HEY accepts the change, matching list rows and unread counts update.
-Open lists that report read state fetch their loaded pages to check the result.
+Open lists that report read state check loaded pages until they find the marked
+threads or reach the last loaded page. Rows on unchecked pages stay unchanged.
 A failed check does not undo the accepted change. A timeout or interrupted
 request may already have reached HEY; refresh before trying again. The package
 never retries a mark-read request automatically.

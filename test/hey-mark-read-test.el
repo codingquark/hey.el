@@ -573,5 +573,190 @@ When TEXT is nil, require silence."
         (should-not hey--loading)
         (should-not hey--request)))))
 
+(ert-deftest hey-mark-read-formats-only-changed-rows ()
+  (hey-mark-test-with-list
+    (let ((row-vector (symbol-function 'hey--row-vector))
+          formatted write-success write-failure read-success)
+      (setq hey--records
+            (cons (hey-mark-test--posting "71")
+                  (mapcar (lambda (id) (hey-mark-test--posting id 'seen))
+                          '("72" "73" "74")))
+            hey--operation-overrides
+            `((hey-cli-mark-read
+               . ,(lambda (_a _p _o _k _g ok bad &optional _finish)
+                    (setq write-success ok write-failure bad)))
+              (hey-cli-box-view
+               . ,(lambda (_a _s _p _o _k _g ok _bad)
+                    (setq read-success ok)))))
+      (hey--render-list)
+      (cl-letf (((symbol-function 'hey--row-vector)
+                 (lambda (posting now)
+                   (push (hey-posting-key posting) formatted)
+                   (funcall row-vector posting now))))
+        (hey-mark-read)
+        (should-not formatted)
+        (funcall write-failure (make-hey-error :category 'timeout))
+        (should-not formatted)
+        (hey-mark-read)
+        (should-not formatted)
+        (funcall write-success '(("ok" . t)))
+        (should (equal formatted '(("101" "71"))))
+        (setq formatted nil)
+        (funcall read-success
+                 (hey-mark-test--envelope '("71" "72" "73" "74") t))
+        (should-not formatted)
+        (should-not hey--request)))))
+
+(ert-deftest hey-mark-read-preserves-unaffected-text-and-point ()
+  (dolist (case '(("71" 12) ("72" 0) ("72" 12)))
+    (hey-mark-test-with-list
+      (setq hey--records (list (hey-mark-test--posting "71")
+                               (hey-mark-test--posting "72"))
+            hey--warnings '("Synthetic warning"))
+      (setf (hey-source-continuation hey--source) "cursor-more")
+      (hey--render-list)
+      (hey-next-row)
+      (let ((other-row (point-marker))
+            (changes 0)
+            footer button)
+        (let ((inhibit-read-only t))
+          (add-text-properties (line-beginning-position) (line-end-position)
+                               '(hey-mark-test-preserved row))
+          (goto-char (point-max))
+          (search-backward "[Load more]")
+          (setq button (button-at (point))
+                footer (point-marker))
+          (add-text-properties (point) (1+ (point))
+                               '(hey-mark-test-preserved footer)))
+        (set-buffer-modified-p nil)
+        (hey--first-row)
+        (when (equal (car case) "72") (hey-next-row))
+        (move-to-column (cadr case))
+        (let ((after-change-functions
+               (list (lambda (&rest _args) (cl-incf changes)))))
+          (hey--mark-read-present '("101" "71") nil nil 'seen))
+        (should (equal (tabulated-list-get-id) (list "101" (car case))))
+        (should (= (current-column) (cadr case)))
+        (should (eq (get-text-property other-row 'hey-mark-test-preserved) 'row))
+        (should (eq (get-text-property footer 'hey-mark-test-preserved) 'footer))
+        (should (eq (button-get (button-at footer) 'action)
+                    (button-get button 'action)))
+        (should (string-match-p "1/2" (hey--status-header)))
+        (should (string-match-p "malformed results" (buffer-string)))
+        (should (zerop changes))
+        (should-not (buffer-modified-p))
+        (set-marker other-row nil)
+        (set-marker footer nil)))))
+
+(ert-deftest hey-mark-read-stops-after-observing-target ()
+  (dolist (case '((nil t) ("cursor-two" t) (nil nil)))
+    (hey-mark-test-with-list
+      (let ((target-page (car case))
+            (seen (cadr case))
+            calls)
+        (setf (hey-source-consumed hey--source) '("cursor-three" "cursor-two")
+              (hey-source-continuation hey--source) "cursor-four")
+        (setq hey--operation-overrides
+              `((hey-cli-mark-read
+                 . ,(lambda (_a _p _o _k _g ok _bad &optional _finish)
+                      (funcall ok '(("ok" . t)))))
+                (hey-cli-box-view
+                 . ,(lambda (_a _s page _o _k _g ok _bad)
+                      (push page calls)
+                      (funcall ok
+                               (hey-mark-test--envelope
+                                (if (equal page target-page) '("71") '("72"))
+                                seen))))))
+        (hey-mark-read)
+        (should (equal (reverse calls)
+                       (if target-page '(nil "cursor-two") '(nil))))
+        (should (eq (hey-posting-seen (car hey--records))
+                    (if seen 'seen 'unseen)))
+        (should (equal (hey-source-consumed hey--source)
+                       '("cursor-three" "cursor-two")))
+        (should (equal (hey-source-continuation hey--source) "cursor-four"))
+        (should-not hey--request)
+        (hey-mark-test--assert-result
+         (unless seen "Read accepted; server reports unread"))))))
+
+(ert-deftest hey-mark-read-exhausts-pages-without-known-target-state ()
+  (dolist (state '(missing unknown))
+    (hey-mark-test-with-list
+      (let ((normalize (symbol-function 'hey-model-normalize-postings))
+            calls)
+        (setf (hey-source-consumed hey--source) '("cursor-three" "cursor-two"))
+        (setq hey--operation-overrides
+              `((hey-cli-mark-read
+                 . ,(lambda (_a _p _o _k _g ok _bad &optional _finish)
+                      (funcall ok '(("ok" . t)))))
+                (hey-cli-box-view
+                 . ,(lambda (_a _s page _o _k _g ok _bad)
+                      (push page calls)
+                      (funcall ok (hey-mark-test--envelope
+                                   (if (eq state 'missing) '("72") '("71")) t))))))
+        (cl-letf (((symbol-function 'hey-model-normalize-postings)
+                   (lambda (envelope source)
+                     (let ((result (funcall normalize envelope source)))
+                       (when (eq state 'unknown)
+                         (dolist (posting (plist-get result :value))
+                           (setf (hey-posting-seen posting) 'unknown)))
+                       result))))
+          (hey-mark-read))
+        (should (equal (reverse calls) '(nil "cursor-two" "cursor-three")))
+        (should-not hey--request)
+        (hey-mark-test--assert-result nil)))))
+
+(ert-deftest hey-mark-read-checks-all-deferred-acknowledgments ()
+  (hey-mark-test-with-list
+    (let (calls)
+      (setq hey--records (list (hey-mark-test--posting "71")
+                               (hey-mark-test--posting "72"))
+            hey--operation-overrides
+            `((hey-cli-mark-read
+               . ,(lambda (_a _p _o _k _g ok _bad &optional _finish)
+                    (funcall ok '(("ok" . t)))))
+              (hey-cli-box-view
+               . ,(lambda (_a _s page _o _k _g ok _bad)
+                    (push page calls)
+                    (funcall ok (hey-mark-test--envelope
+                                 (if page '("72") '("71")) t))))))
+      (setf (hey-source-consumed hey--source) '("cursor-three" "cursor-two"))
+      (hey--render-list)
+      ;; Hold verification while a source request is still pending.
+      (setq hey--loading t)
+      (hey-mark-read)
+      (hey-next-row)
+      (hey-mark-read)
+      (should-not calls)
+      (should (member '("101" "71") hey--read-acknowledgements))
+      (should (member '("101" "72") hey--read-acknowledgements))
+      (setq hey--loading nil)
+      (hey--mark-read-reconcile '("101" "71") hey--operation-overrides)
+      (should (equal (reverse calls) '(nil "cursor-two")))
+      (should-not hey--request)
+      (hey-mark-test--assert-result nil))))
+
+(ert-deftest hey-mark-read-keeps-first-observation-across-pages ()
+  (hey-mark-test-with-list
+    (let (calls)
+      (setq hey--records (list (hey-mark-test--posting "71")
+                               (hey-mark-test--posting "72"))
+            hey--operation-overrides
+            `((hey-cli-mark-read
+               . ,(lambda (_a _p _o _k _g ok _bad &optional _finish)
+                    (funcall ok '(("ok" . t)))))
+              (hey-cli-box-view
+               . ,(lambda (_a _s page _o _k _g ok _bad)
+                    (push page calls)
+                    (funcall ok (hey-mark-test--envelope
+                                 (if page '("72" "71") '("72")) page))))))
+      (setf (hey-source-consumed hey--source) '("cursor-three" "cursor-two"))
+      (hey--render-list)
+      (hey-mark-read)
+      (should (equal (reverse calls) '(nil "cursor-two")))
+      (should (eq (hey-posting-seen (car hey--records)) 'seen))
+      (should (eq (hey-posting-seen (cadr hey--records)) 'unseen))
+      (hey-mark-test--assert-result nil))))
+
 (provide 'hey-mark-read-test)
 ;;; hey-mark-read-test.el ends here

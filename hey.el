@@ -544,6 +544,36 @@ When WIDTH is non-nil, use it for responsive column selection."
      (hey--records (hey--first-row))
      (t (goto-char (point-min)) (forward-line 1)))))
 
+(defun hey--redraw-postings (postings)
+  "Redraw changed POSTINGS without replacing other rows or footers."
+  (when postings
+    (let ((changed (make-hash-table :test 'equal))
+          (identity (tabulated-list-get-id))
+          (column (current-column))
+          (saved-point (copy-marker (point) t))
+          (now (current-time))
+          selected-position)
+      (dolist (posting postings)
+        (puthash (hey-posting-key posting) posting changed))
+      (unwind-protect
+          (with-silent-modifications
+            (goto-char (point-min))
+            (while (and (not (eobp)) (> (hash-table-count changed) 0))
+              (let* ((key (tabulated-list-get-id))
+                     (posting (gethash key changed)))
+                (if (not posting)
+                    (forward-line 1)
+                  (when (equal key identity)
+                    (setq selected-position (point)))
+                  ;; Insert first so markers on the following row stay there.
+                  (tabulated-list-print-entry key (hey--row-vector posting now))
+                  (tabulated-list-delete-entry)
+                  (remhash key changed)))))
+        ;; Follow edits before point, but restore a replaced row's column.
+        (goto-char (or selected-position saved-point))
+        (when selected-position (move-to-column column))
+        (set-marker saved-point nil)))))
+
 (defconst hey--header-separator
   (propertize " · " 'face 'hey-header-separator-face)
   "Separator between HEY header elements.")
@@ -1292,8 +1322,8 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
 (defun hey--posting-matches-target-p (posting target)
   "Return non-nil when POSTING has the account and posting identity TARGET."
   (and (not (eq (hey-posting-kind posting) 'bundle))
-       (equal target (list (hey-posting-account-id posting)
-                           (hey-posting-id posting)))))
+       (equal (car target) (hey-posting-account-id posting))
+       (equal (cadr target) (hey-posting-id posting))))
 
 (defun hey--thread-matches-target-p (target)
   "Return non-nil when this thread has the captured posting identity TARGET."
@@ -1310,33 +1340,36 @@ Leave search rows unknown because search does not report read state."
   (let (presented)
     (dolist (buffer (buffer-list))
       (with-current-buffer buffer
-        (let ((postings (and (derived-mode-p 'hey-list-mode)
-                             (cl-remove-if-not
-                              (lambda (posting)
-                                (hey--posting-matches-target-p posting target))
-                              hey--records)))
-              (thread-p (hey--thread-matches-target-p target)))
-          (when (and (eq backend hey--operation-overrides)
-                     (or postings thread-p))
-            (setq presented t)
-            (when seen
-              (dolist (posting postings)
-                (unless (eq (hey-posting-seen posting) 'unknown)
-                  (setf (hey-posting-seen posting) seen)))
-              (when thread-p
-                ;; This plist is also captured by an in-flight thread read.
-                ;; Updating it prevents that read from restoring older state.
-                (setf (plist-get hey--thread-origin-context :seen) seen)
-                (when (hey-thread-p hey--thread)
-                  (setf (hey-thread-seen hey--thread) seen))))
-            ;; Finishing one thread must not clear another thread's progress.
-            (when (or pending (null hey--mark-read-status)
-                      (equal target hey--mark-read-status-target))
-              (setq hey--mark-read-status
-                    (and pending (cons (hey--mark-read-context) text))
-                    hey--mark-read-status-target target))
-            (when postings (hey--render-list t))
-            (force-mode-line-update)))))
+        (when (eq backend hey--operation-overrides)
+          (let ((postings (and (derived-mode-p 'hey-list-mode)
+                               (cl-remove-if-not
+                                (lambda (posting)
+                                  (hey--posting-matches-target-p posting target))
+                                hey--records)))
+                (thread-p (hey--thread-matches-target-p target))
+                changed)
+            (when (or postings thread-p)
+              (setq presented t)
+              (when seen
+                (dolist (posting postings)
+                  (unless (or (eq (hey-posting-seen posting) 'unknown)
+                              (eq (hey-posting-seen posting) seen))
+                    (setf (hey-posting-seen posting) seen)
+                    (push posting changed)))
+                (when thread-p
+                  ;; This plist is also captured by an in-flight thread read.
+                  ;; Updating it prevents that read from restoring older state.
+                  (setf (plist-get hey--thread-origin-context :seen) seen)
+                  (when (hey-thread-p hey--thread)
+                    (setf (hey-thread-seen hey--thread) seen))))
+              ;; Finishing one thread must not clear another thread's progress.
+              (when (or pending (null hey--mark-read-status)
+                        (equal target hey--mark-read-status-target))
+                (setq hey--mark-read-status
+                      (and pending (cons (hey--mark-read-context) text))
+                      hey--mark-read-status-target target))
+              (hey--redraw-postings changed)
+              (force-mode-line-update))))))
     (when (and presented text (not pending))
       (let ((message-log-max nil))
         (message "%s" text)))))
@@ -1361,13 +1394,17 @@ Leave search rows unknown because search does not report read state."
 
 (defun hey--mark-read-reconcile (target backend)
   "Check TARGET using BACKEND against the loaded pages of this list.
+Check any other acknowledged targets before stopping at a page boundary.
 Update read states in place, preserving pagination, row order, and point."
   (let* ((buffer (current-buffer))
          (source (copy-hey-source hey--source))
          (source-key (hey-source-key source))
+         (targets (cons target hey--read-acknowledgements))
          (generation (hey--next-generation))
          (pages (cons nil (reverse (hey-source-consumed source))))
-         observations)
+         (remaining (make-hash-table :test 'equal))
+         (observations (make-hash-table :test 'equal)))
+    (dolist (identity targets) (puthash identity t remaining))
     (cl-labels
         ((current-p ()
            (and (hey--commit-p buffer source-key generation)
@@ -1399,28 +1436,34 @@ Update read states in place, preserving pagination, row order, and point."
                                                    envelope page-source))
                                           (rows (hey--apply-read-acknowledgements
                                                  (plist-get result :value))))
-                                     (setq observations
-                                           (hey--deduplicate observations rows))
-                                     (if pages
+                                     (dolist (posting rows)
+                                       (let ((key (hey-posting-key posting)))
+                                         ;; Keep the first observation of each posting.
+                                         (unless (gethash key observations)
+                                           (puthash key posting observations)
+                                           (when (and (not (eq (hey-posting-kind posting)
+                                                               'bundle))
+                                                      (memq (hey-posting-seen posting)
+                                                            '(seen unseen)))
+                                             (remhash key remaining)))))
+                                     (if (and pages (> (hash-table-count remaining) 0))
                                          (read-page)
                                        (setq hey--request nil)
-                                       (dolist (posting hey--records)
-                                         (let ((fresh
-                                                (cl-find
-                                                 (hey-posting-key posting)
-                                                 observations
-                                                 :key #'hey-posting-key
-                                                 :test #'equal)))
-                                           (when fresh
-                                             (setf (hey-posting-seen posting)
-                                                   (hey-posting-seen fresh)))))
-                                       (let* ((fresh
-                                               (cl-find-if
-                                                (lambda (posting)
-                                                  (hey--posting-matches-target-p
-                                                   posting target))
-                                                observations))
+                                       (let (changed)
+                                         (dolist (posting hey--records)
+                                           (let ((fresh (gethash (hey-posting-key posting)
+                                                                 observations)))
+                                             (when (and fresh
+                                                        (not (eq (hey-posting-seen posting)
+                                                                 (hey-posting-seen fresh))))
+                                               (setf (hey-posting-seen posting)
+                                                     (hey-posting-seen fresh))
+                                               (push posting changed))))
+                                         (hey--redraw-postings changed))
+                                       (let* ((fresh (gethash target observations))
                                               (seen (and fresh
+                                                         (hey--posting-matches-target-p
+                                                          fresh target)
                                                          (hey-posting-seen fresh))))
                                          (unless (hey--mark-read-pending-p target backend)
                                            (hey--mark-read-present
@@ -1428,7 +1471,7 @@ Update read states in place, preserving pagination, row order, and point."
                                             (when (eq seen 'unseen)
                                               "Read accepted; server reports unread")
                                             seen)))
-                                       (hey--render-list t))))))
+                                       (force-mode-line-update))))))
                              (lambda (_error)
                                (setq finished t)
                                (failed)))))
