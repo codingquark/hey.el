@@ -46,10 +46,12 @@ names, and the `hey-` prefix. Declare dependencies and support Emacs
 
 ## Prose
 
-Follow Denote and Modus themes: direct summaries, active voice, present
-tense. Start function docstrings with an imperative summary; keep
-simple ones to one line. Explain data shapes and non-obvious contracts
-beside the code. Comments explain purpose or rationale.
+Follow Denote and Modus themes: direct summaries, active voice,
+present tense. Start function docstrings with an imperative summary;
+keep simple ones to one line. Explain data shapes and non-obvious
+contracts beside the code. Comments explain purpose or rationale. Read
+modus-themes docs from `~/.config/emacs`. Similarly, read for
+`elfeed`.
 
 Keep usage and development instructions in `README.md`, release
 history in `CHANGELOG.md`, and validation evidence in commit or review
