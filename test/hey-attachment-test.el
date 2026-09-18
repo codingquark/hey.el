@@ -99,6 +99,36 @@
         (should (string-match-p (regexp-quote (nth 2 case)) (buffer-string)))
         (should-not (string-match-p "Press g to retry" (buffer-string)))))))
 
+(ert-deftest hey-attachment-render-preserves-message-context-and-refreshes-it ()
+  "Retain first matching entries, missing fields, and refreshed message context."
+  (hey-test-with-fake nil
+    (with-temp-buffer
+      (hey-attachment-mode)
+      (setq hey--attachment-thread
+            (make-hey-thread
+             :entries (list (make-hey-entry :id "801" :timestamp "2026-09-17")
+                            (make-hey-entry :id "801" :sender "Duplicate")
+                            (make-hey-entry :id "802" :sender "" :timestamp "")
+                            (make-hey-entry :id "803")
+                            (make-hey-entry :id "804" :sender "Alice")))
+            hey--attachments
+            (cl-loop for id in '("801" "801" "802" "803" "804" "805")
+                     for index from 1
+                     collect (make-hey-attachment
+                              :id (format "%s:%d" id index) :message-id id
+                              :filename "fixture.txt" :content-type "text/plain"
+                              :byte-size index)))
+      (hey--render-attachments)
+      (should (equal (mapcar (lambda (row) (aref (cadr row) 3))
+                             tabulated-list-entries)
+                     '("2026-09-17" "2026-09-17" " " "" "Alice" "805")))
+      (setf (hey-thread-entries hey--attachment-thread)
+            (list (make-hey-entry :id "801" :sender "Updated")))
+      (hey--render-attachments)
+      (should (equal (mapcar (lambda (row) (aref (cadr row) 3))
+                             tabulated-list-entries)
+                     '("Updated" "Updated" "802" "803" "804" "805"))))))
+
 (ert-deftest hey-attachment-list-is-on-demand-and-reused ()
   (save-window-excursion
     (let ((thread-buffer (generate-new-buffer " *attachment-origin*"))

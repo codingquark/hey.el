@@ -2161,21 +2161,25 @@ Ignore lookup errors to keep this `post-command-hook' function active."
           (hey--stale (hey--header-element "Stale" 'hey-header-warning-face)))
     (hey--header-element hey--attachment-save-status 'hey-header-status-face))))
 
-(defun hey--attachment-message (attachment)
-  "Return the known sender and date for ATTACHMENT, or its message ID."
-  (let ((entry (cl-find (hey-attachment-message-id attachment)
-                        (hey-thread-entries hey--attachment-thread)
-                        :key #'hey-entry-id :test #'equal)))
+(defun hey--attachment-message (attachment &optional entries)
+  "Return the known sender and date for ATTACHMENT, or its message ID.
+Use ENTRIES as a message ID table when non-nil."
+  (let ((entry (if entries
+                   (gethash (hey-attachment-message-id attachment) entries)
+                 (cl-find (hey-attachment-message-id attachment)
+                           (hey-thread-entries hey--attachment-thread)
+                           :key #'hey-entry-id :test #'equal))))
     (if entry
         (string-join (delq nil (list (hey-entry-sender entry)
                                      (hey-entry-timestamp entry))) " ")
       (hey-attachment-message-id attachment))))
 
-(defun hey--attachment-row (attachment)
-  "Return a table row for normalized ATTACHMENT."
+(defun hey--attachment-row (attachment &optional entries)
+  "Return a table row for normalized ATTACHMENT.
+Use ENTRIES as a message ID table when non-nil."
   (let* ((size (hey-attachment-byte-size attachment))
          (filename (hey-attachment-filename attachment))
-         (message (hey--attachment-message attachment)))
+         (message (hey--attachment-message attachment entries)))
     (list (hey-attachment-id attachment)
           (vector (propertize (if (string-empty-p filename) "(unnamed)" filename)
                               'help-echo filename)
@@ -2192,8 +2196,16 @@ Ignore lookup errors to keep this `post-command-hook' function active."
 (defun hey--render-attachments ()
   "Render attachments while retaining the selected identity."
   (let ((id (tabulated-list-get-id))
+        (entries (make-hash-table :test #'equal))
         (inhibit-read-only t))
-    (setq tabulated-list-entries (mapcar #'hey--attachment-row hey--attachments))
+    ;; Resolve message context once per render, retaining the first entry ID.
+    (when hey--attachments
+      (dolist (entry (hey-thread-entries hey--attachment-thread))
+        (unless (gethash (hey-entry-id entry) entries)
+          (puthash (hey-entry-id entry) entry entries))))
+    (setq tabulated-list-entries
+          (mapcar (lambda (attachment) (hey--attachment-row attachment entries))
+                   hey--attachments))
     (tabulated-list-print t)
     (save-excursion
       (goto-char (point-max))
