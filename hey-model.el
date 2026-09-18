@@ -980,12 +980,8 @@ Memberships retain their complete values in `help-echo'."
   (let ((names (hey-model--membership-names memberships)))
     (if names (string-join names ", ") "none")))
 
-(defun hey-model-thread-markdown (thread)
-  "Return the package-owned Markdown scaffold for normalized THREAD.
-
-Metadata is sanitized and Markdown-escaped.  Entry bodies are already
-Markdown from the CLI and are inserted unchanged; their headings do not
-define UI entry boundaries."
+(defun hey-model-thread-preamble (thread)
+  "Return sanitized, Markdown-escaped metadata and its separator for THREAD."
   (let ((parts nil)
         (entries (hey-thread-entries thread)))
     (push (hey-model--thread-field "Subject" (hey-thread-subject thread)) parts)
@@ -1008,6 +1004,16 @@ define UI entry boundaries."
     (when (hey-thread-notice thread)
       (push (hey-model--thread-field "Notice" (hey-thread-notice thread)) parts))
     (push "\n---\n" parts)
+    (apply #'concat (nreverse parts))))
+
+(defun hey-model-thread-markdown (thread)
+  "Return the package-owned Markdown scaffold for normalized THREAD.
+
+Metadata is sanitized and Markdown-escaped.  Entry bodies are already
+Markdown from the CLI and are inserted unchanged; their headings do not
+define UI entry boundaries."
+  (let ((parts (list (hey-model-thread-preamble thread)))
+        (entries (hey-thread-entries thread)))
     (dolist (entry entries)
       (let* ((entry-id (hey-entry-id entry))
              (header (format "\n## %s — %s\n\n"

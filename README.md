@@ -83,6 +83,11 @@ three unread out of twenty displayed. Search results have unknown read state
 and show `?/20`; an empty list shows `0/0`. Outside search, mail counts as
 seen when the CLI reports it as seen or accepts an explicit mark-read request.
 
+Reopening a loaded thread keeps its contents visible while fetching an update.
+The update preserves your position within the same message when it still exists.
+If the request fails, the header shows `Stale` and the thread keeps its cached
+contents with recovery guidance. The cache stays in memory.
+
 In a thread, `n` and `p` move between messages, `SPC` and `DEL` scroll,
 `r` marks the thread read, and `A` lists its attachments. The following keys
 act on body links:

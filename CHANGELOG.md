@@ -5,7 +5,12 @@
 - Append new list rows without rebuilding existing rows, and update request
   status separately. Reuse formatted dates until the source, local date,
   timezone, or locale changes; explicit refresh clears the date cache.
-- Cache list header counts until rows change.
+- Keep loaded threads visible during refresh, preserve message-relative reading
+  positions, and show cached contents with recovery guidance after failures.
+- Fontify thread bodies as they become visible and preserve metadata faces
+  during later fontification.
+- Cache list header counts until rows change and navigate directly between
+  message boundaries.
 - Reduce repeated metadata, membership, and date formatting work. Deduplicate
   attachments and thread senders with hash tables while preserving their order.
 - Remove Unicode C1 controls from metadata as well as raw control bytes.

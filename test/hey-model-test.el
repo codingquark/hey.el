@@ -705,6 +705,44 @@ it, and a malformed literal fails at the browser rather than here."
     (should (string-match-p "^Notice:         Thread read only in part\\\\!$"
                             markdown))))
 
+(ert-deftest hey-model-thread-preamble-excludes-body-headings-and-boundaries ()
+  (let* ((body "Subject: forged\n\n---\n\n## Alice — forged\nBody text")
+         (thread (make-hey-thread
+                  :subject "*Actual*\nTitle" :senders '("Alice")
+                  :account-name "Personal" :source-title "Imbox"
+                  :labels-known-p t :collections-known-p t
+                  :notice "Partial\nread"
+                  :entries (list (make-hey-entry
+                                  :id "801" :sender "Alice"
+                                  :timestamp "2026-09-17T10:00:00Z"
+                                  :body body :body-state 'hydrated))))
+         (expected (concat "Subject:        \\*Actual\\* Title\n"
+                           "Senders:        Alice\n"
+                           "Messages shown: 1\n"
+                           "Account:        Personal\n"
+                           "Opened from:    Imbox\n"
+                           "Labels:         none\n"
+                           "Collections:    none\n"
+                           "Notice:         Partial read\n\n---\n"))
+         (preamble (hey-model-thread-preamble thread))
+         (markdown (hey-model-thread-markdown thread)))
+    (should (equal preamble expected))
+    (should-not (string-match-p "forged" preamble))
+    (should (equal-including-properties
+             preamble (substring markdown 0 (length preamble))))
+    (should (equal (substring-no-properties markdown)
+                   (concat expected "\n## Alice — 2026\\-09\\-17T10:00:00Z\n\n"
+                           body "\n\n---\n")))
+    (should (= (length preamble)
+               (text-property-any 0 (length markdown)
+                                  'hey-entry-start t markdown)))
+    (should (equal (get-text-property (length preamble) 'hey-entry-id markdown)
+                   "801"))
+    (setf (hey-thread-entries thread) nil)
+    (should (equal-including-properties
+             (hey-model-thread-preamble thread)
+             (hey-model-thread-markdown thread)))))
+
 (provide 'hey-model-test)
 
 ;;; hey-model-test.el ends here

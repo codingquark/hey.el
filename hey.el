@@ -215,6 +215,10 @@ Clear this cache when records change in place, before redrawing rows.")
 (defvar-local hey--columns-key nil)
 (defvar-local hey--thread nil)
 (defvar-local hey--thread-key nil)
+(defvar-local hey--thread-preamble-end nil
+  "End of the package-owned thread metadata, before entry bodies.")
+(defvar-local hey--thread-footer-start nil
+  "Marker separating cached thread contents from refresh failures.")
 (defvar-local hey--thread-origin-context nil
   "Normalized posting context captured when opening the thread.")
 (defvar-local hey--read-acknowledgements nil
@@ -1342,59 +1346,75 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
 
 (defun hey--open-thread (posting intent)
   "Fetch and display the thread represented by POSTING using INTENT."
-  (let* ((origin-buffer (current-buffer))
-         (origin (hey--origin-for posting))
+  (let* ((origin (hey--origin-for posting))
          (context (hey--thread-context posting))
          (topic-id (hey-posting-topic-id posting))
          (account-id (plist-get context :account-id))
          (thread-key (list account-id topic-id))
+         (backend hey--operation-overrides)
          (buffer (get-buffer-create
                   (hey--thread-buffer-name account-id topic-id))))
     (with-current-buffer buffer
       (unless (derived-mode-p 'hey-thread-mode)
         (hey-thread-mode))
-      (hey--next-generation)
-      (setq hey--origin origin
-            hey--thread nil
-            hey--thread-origin-context context
-            hey--thread-key thread-key
-            hey--loading t
-            hey--error nil
-            hey--operation-overrides
-            (buffer-local-value 'hey--operation-overrides origin-buffer))
-      (hey--render-thread-state "Loading HEY thread…")
-      (let ((generation hey--generation)
-            (source-key (cons 'thread thread-key)))
-        (setq hey--request
-              (hey--call
-               'hey-cli-thread-read (plist-get context :account-id) topic-id
-               buffer source-key generation
-               (lambda (envelope)
-                 (when (and (buffer-live-p buffer)
-                            (= generation
-                               (buffer-local-value 'hey--generation buffer))
-                            (equal thread-key
-                                   (buffer-local-value 'hey--thread-key buffer)))
-                   (with-current-buffer buffer
-                     (let ((result (hey-model-normalize-thread envelope context)))
-                       (setq hey--thread (plist-get result :value)
-                             hey--warnings (plist-get result :warnings)
-                             hey--loading nil hey--error nil hey--request nil)
-                       (hey--render-thread)))))
-               (lambda (error)
-                 (when (and (buffer-live-p buffer)
-                            (= generation
-                               (buffer-local-value 'hey--generation buffer))
-                            (equal thread-key
-                                   (buffer-local-value 'hey--thread-key buffer)))
-                   (with-current-buffer buffer
-                     (setq hey--loading nil hey--error error hey--request nil)
-                     (hey--render-thread-state
-                      (format "HEY could not load this thread: %s\n\n%s"
-                              (hey-error-message error)
-                              (hey--error-guidance
-                               error "Return to the list and reopen the thread to retry."))
-                      'hey-error-face))))))))
+      (let ((reuse (and (hey-thread-p hey--thread)
+                        (equal hey--thread-key thread-key)
+                        (integerp hey--thread-preamble-end)
+                        (markerp hey--thread-footer-start)
+                        (equal (hey-thread-account-id hey--thread) account-id)
+                        (equal (hey-thread-topic-id hey--thread) topic-id)
+                        (eq hey--operation-overrides backend))))
+        (hey--next-generation)
+        (when (and reuse (not (equal context hey--thread-origin-context)))
+          (hey--update-thread-context context))
+        (setq hey--origin origin
+              hey--thread (and reuse hey--thread)
+              hey--thread-origin-context context
+              hey--thread-key thread-key
+              hey--loading t
+              hey--stale nil
+              hey--error nil
+              hey--operation-overrides backend)
+        (if reuse
+            (hey--render-thread-status)
+          (setq hey--warnings nil)
+          (hey--render-thread-state "Loading HEY thread…"))
+        (let ((generation hey--generation)
+              (source-key (cons 'thread thread-key)))
+          (setq hey--request
+                (hey--call
+                 'hey-cli-thread-read account-id topic-id
+                 buffer source-key generation
+                 (lambda (envelope)
+                   (when (and (buffer-live-p buffer)
+                              (= generation
+                                 (buffer-local-value 'hey--generation buffer))
+                              (equal thread-key
+                                     (buffer-local-value 'hey--thread-key buffer)))
+                     (with-current-buffer buffer
+                       (let ((result (hey-model-normalize-thread envelope context)))
+                         (setq hey--thread (plist-get result :value)
+                               hey--warnings (plist-get result :warnings)
+                               hey--loading nil hey--stale nil
+                               hey--error nil hey--request nil)
+                         (hey--render-thread reuse)))))
+                 (lambda (error)
+                   (when (and (buffer-live-p buffer)
+                              (= generation
+                                 (buffer-local-value 'hey--generation buffer))
+                              (equal thread-key
+                                     (buffer-local-value 'hey--thread-key buffer)))
+                     (with-current-buffer buffer
+                       (setq hey--loading nil hey--error error hey--request nil
+                             hey--stale (and reuse t))
+                       (if reuse
+                           (hey--render-thread-status)
+                         (hey--render-thread-state
+                          (format "HEY could not load this thread: %s\n\n%s"
+                                  (hey-error-message error)
+                                  (hey--error-guidance
+                                   error "Return to the list and reopen the thread to retry."))
+                          'hey-error-face))))))))))
     (hey-display-buffer buffer intent)))
 
 (defun hey-open ()
@@ -1758,44 +1778,182 @@ FACE defaults to `hey-status-face'."
                      'hey-header-subject-face))
            (status (hey--header-element (hey--mark-read-status-text)
                                         'hey-header-status-face))
+           (refresh (cond
+                     (hey--loading
+                      (hey--header-element "Refreshing…" 'hey-header-status-face))
+                     (hey--stale
+                      (hey--header-element "Stale" 'hey-header-warning-face))))
            (count (hey--header-element
                    (format "%d shown"
                            (length (hey-thread-entries hey--thread)))
                    'hey-header-count-face)))
       (hey--header-join
        (cond
-        ((>= width 100) (list account source subject count status))
-        ((>= width 65) (list account source count status))
-        (t (list source count status)))))))
+        ((>= width 100) (list account source subject count refresh status))
+        ((>= width 65) (list account source count refresh status))
+        (t (list source count refresh status)))))))
 
-(defun hey--render-thread ()
-  "Render the normalized buffer-local HEY thread."
-  (let ((inhibit-read-only t)
-        preamble-end warning-start)
+(defun hey--thread-position (position)
+  "Describe POSITION by entry identity, character offset, and fallback position."
+  (let* ((sample (max (point-min) (min position (1- (point-max)))))
+         (id (get-text-property sample 'hey-entry-id))
+         (start (and id (previous-single-property-change
+                         (1+ sample) 'hey-entry-id nil (point-min)))))
+    (list id (and start (- position start)) position)))
+
+(defun hey--thread-position-value (saved)
+  "Resolve SAVED in the refreshed thread, keeping offsets inside their entry."
+  (let ((position (point-min)) found)
+    (when (car saved)
+      (while (and (< position (point-max)) (not found))
+        (if (equal (get-text-property position 'hey-entry-id) (car saved))
+            (setq found position)
+          (setq position (next-single-property-change
+                          position 'hey-entry-id nil (point-max))))))
+    (if found
+        (let ((end (next-single-property-change found 'hey-entry-id nil (point-max))))
+          (min (+ found (cadr saved))
+               (if (= end (point-max)) end (1- end))))
+      (max (point-min) (min (nth 2 saved) (point-max))))))
+
+(defun hey--thread-view-state ()
+  "Capture point, windows, and attachment origins as entry-relative locations.
+Return (POINT WINDOWS ORIGINS), retaining each attachment buffer and marker
+so restoration cannot redirect an origin that changed during rendering."
+  (let ((thread-buffer (current-buffer)) origins)
+    (dolist (buffer (buffer-list))
+      (let ((origin (buffer-local-value 'hey--attachment-origin buffer)))
+        (when (and (markerp origin)
+                   (eq (marker-buffer origin) thread-buffer)
+                   (with-current-buffer buffer
+                     (derived-mode-p 'hey-attachment-mode)))
+          (push (list buffer origin (hey--thread-position (marker-position origin)))
+                origins))))
+    (list (hey--thread-position (point))
+          (mapcar (lambda (window)
+                    (list window
+                          (hey--thread-position (window-point window))
+                          (hey--thread-position (window-start window))))
+                  (get-buffer-window-list thread-buffer nil t))
+          origins)))
+
+(defun hey--restore-thread-view (state)
+  "Restore point, visible windows, and unchanged attachment origins from STATE."
+  (goto-char (hey--thread-position-value (car state)))
+  (dolist (view (cadr state))
+    (when (and (window-live-p (car view))
+               (eq (window-buffer (car view)) (current-buffer)))
+      (set-window-point (car view) (hey--thread-position-value (cadr view)))
+      (set-window-start (car view) (hey--thread-position-value (nth 2 view)) t)))
+  (dolist (origin (nth 2 state))
+    (when (and (buffer-live-p (car origin))
+               (eq (cadr origin)
+                   (buffer-local-value 'hey--attachment-origin (car origin)))
+               (eq (marker-buffer (cadr origin)) (current-buffer)))
+      (set-marker (cadr origin) (hey--thread-position-value (nth 2 origin))))))
+
+(defun hey--thread-face (start end face)
+  "Mark START through END with package-owned FACE for later fontification."
+  (put-text-property start end 'hey-thread-face face)
+  (add-face-text-property start end face t))
+
+(defun hey--match-thread-face (limit)
+  "Find the next package-owned face span before LIMIT."
+  (let ((position (point)))
+    (while (and (< position limit)
+                (not (get-text-property position 'hey-thread-face)))
+      (setq position (next-single-property-change
+                      position 'hey-thread-face nil limit)))
+    (when (< position limit)
+      (let ((end (next-single-property-change position 'hey-thread-face nil limit)))
+        (set-match-data (list position end))
+        (goto-char end)
+        t))))
+
+(defun hey--fontify-thread-preamble ()
+  "Mark metadata faces only inside the package-owned thread preamble."
+  (save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward
+            "^\\(Subject:\\|Senders:\\|Messages shown:\\|Account:\\|Opened from:\\|Labels:\\|Collections:\\|Notice:\\)"
+            hey--thread-preamble-end t)
+      (hey--thread-face (match-beginning 1) (match-end 1) 'hey-metadata-label-face))
+    (goto-char (point-min))
+    (when (re-search-forward "^Subject:[[:space:]]*\\(.*\\)$"
+                             hey--thread-preamble-end t)
+      (hey--thread-face (match-beginning 1) (match-end 1) 'hey-thread-subject-face))))
+
+(defun hey--fontify-thread-view ()
+  "Fontify bounded context near point and each visible window start."
+  (dolist (position (cons (point)
+                          (mapcar #'window-start
+                                  (get-buffer-window-list (current-buffer) nil t))))
+    (font-lock-ensure (max (point-min) (- position 2048))
+                      (min (point-max) (+ position 6144)))))
+
+(defun hey--update-thread-context (context)
+  "Update cached thread metadata from CONTEXT without replacing entry bodies."
+  (let ((view (hey--thread-view-state))
+        (empty (and (= hey--thread-footer-start hey--thread-preamble-end)
+                    (null (hey-thread-entries hey--thread))))
+        (inhibit-read-only t))
+    (setq hey--thread (copy-hey-thread hey--thread))
+    (setf (hey-thread-account-name hey--thread) (plist-get context :account-name)
+          (hey-thread-posting-id hey--thread) (plist-get context :posting-id)
+          (hey-thread-seen hey--thread) (plist-get context :seen)
+          (hey-thread-subject hey--thread) (plist-get context :subject)
+          (hey-thread-source-title hey--thread) (plist-get context :source-title)
+          (hey-thread-labels hey--thread) (plist-get context :labels)
+          (hey-thread-labels-known-p hey--thread) (plist-get context :labels-known-p)
+          (hey-thread-collections hey--thread) (plist-get context :collections)
+          (hey-thread-collections-known-p hey--thread)
+          (plist-get context :collections-known-p))
+    (delete-region (point-min) hey--thread-preamble-end)
+    (goto-char (point-min))
+    (insert (hey-model-thread-preamble hey--thread))
+    (setq hey--thread-preamble-end (point))
+    (when empty (set-marker hey--thread-footer-start (point)))
+    (hey--fontify-thread-preamble)
+    (hey--restore-thread-view view)
+    (hey--fontify-thread-view)))
+
+(defun hey--render-thread-status ()
+  "Update the cached thread's refresh notice without replacing its body."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (when (and (markerp hey--thread-footer-start)
+                 (marker-position hey--thread-footer-start))
+        (delete-region hey--thread-footer-start (point-max))
+        (when hey--error
+          (goto-char (point-max))
+          (let ((start (point)))
+            (insert "\nShowing cached thread. Refresh failed: "
+                    (hey-error-message hey--error) "\n"
+                    (hey--error-guidance
+                     hey--error "Return to the list and reopen the thread to retry.")
+                    "\n")
+            (hey--thread-face start (point) 'hey-error-face)))))
+    (force-mode-line-update)))
+
+(defun hey--render-thread (&optional preserve-point)
+  "Render the normalized thread, retaining entry positions when PRESERVE-POINT."
+  (let ((view (and preserve-point (hey--thread-view-state)))
+        (inhibit-read-only t))
     (erase-buffer)
     (insert (hey-model-thread-markdown hey--thread))
-    (setq preamble-end
-          (text-property-any (point-min) (point-max) 'hey-entry-start t))
+    (setq hey--thread-preamble-end
+          (or (text-property-any (point-min) (point-max) 'hey-entry-start t)
+              (point-max)))
     (when hey--warnings
-      (goto-char (point-max))
-      (setq warning-start (point))
-      (insert "\n> Some malformed thread entries were skipped.\n"))
-    (font-lock-ensure)
-    (save-excursion
-      (when warning-start
-        (add-face-text-property warning-start (point-max)
-                                'hey-warning-face t))
-      (goto-char (point-min))
-      (while (re-search-forward
-              "^\\(Subject:\\|Senders:\\|Messages shown:\\|Account:\\|Opened from:\\|Labels:\\|Collections:\\|Notice:\\)"
-              preamble-end t)
-        (add-face-text-property (match-beginning 1) (match-end 1)
-                                'hey-metadata-label-face t))
-      (goto-char (point-min))
-      (when (re-search-forward "^Subject:[[:space:]]*\\(.*\\)$" nil t)
-        (add-face-text-property (match-beginning 1) (match-end 1)
-                                'hey-thread-subject-face t)))
-    (goto-char (point-min))))
+      (let ((start (point)))
+        (insert "\n> Some malformed thread entries were skipped.\n")
+        (hey--thread-face start (point) 'hey-warning-face)))
+    (setq hey--thread-footer-start (copy-marker (point-max)))
+    (hey--fontify-thread-preamble)
+    (if view (hey--restore-thread-view view) (goto-char (point-min)))
+    ;; Redisplay fontifies remaining body text as it enters a visible window.
+    (hey--fontify-thread-view)
+    (hey--render-thread-status)))
 
 (defun hey--entry-starts ()
   "Return positions of all package-owned HEY entry boundaries."
@@ -1809,16 +1967,20 @@ FACE defaults to `hey-status-face'."
 (defun hey-next-entry ()
   "Move to the next package-owned HEY entry boundary."
   (interactive)
-  (let ((next (cl-find-if (lambda (position) (> position (point)))
-                          (hey--entry-starts))))
+  (let ((next (and (< (point) (point-max))
+                   (text-property-any (1+ (point)) (point-max)
+                                      'hey-entry-start t))))
     (if next (goto-char next) (user-error "No next HEY entry"))))
 
 (defun hey-previous-entry ()
   "Move to the previous package-owned HEY entry boundary."
   (interactive)
-  (let ((previous (car (last (cl-remove-if-not
-                              (lambda (position) (< position (point)))
-                              (hey--entry-starts))))))
+  (let ((position (point)) previous)
+    (while (and (> position (point-min)) (not previous))
+      (setq position (previous-single-property-change
+                      position 'hey-entry-start nil (point-min)))
+      (when (eq (get-text-property position 'hey-entry-start) t)
+        (setq previous position)))
     (if previous (goto-char previous) (user-error "No previous HEY entry"))))
 
 (defun hey--inline-link-destination (start end)
@@ -1934,12 +2096,15 @@ Ignore lookup errors to keep this `post-command-hook' function active."
   "Read a HEY thread and explicitly mark it read with \\[hey-mark-read]."
   (setq-local hey--thread nil
               hey--thread-key nil
+              hey--thread-preamble-end nil
+              hey--thread-footer-start nil
               hey--thread-origin-context nil
               hey--echoed-url nil
               hey--origin nil
               hey--generation 0
               hey--request nil
               hey--loading nil
+              hey--stale nil
               hey--error nil
               hey--warnings nil
               hey--operation-overrides nil
@@ -1956,6 +2121,10 @@ Ignore lookup errors to keep this `post-command-hook' function active."
               backup-inhibited t
               auto-save-default nil
               default-directory temporary-file-directory)
+  (font-lock-add-keywords
+   nil '((hey--match-thread-face
+          (0 (get-text-property (match-beginning 0) 'hey-thread-face) append)))
+   'append)
   (buffer-disable-undo)
   (read-only-mode 1)
   ;; HEY reports validated destinations without logging them to *Messages*.
