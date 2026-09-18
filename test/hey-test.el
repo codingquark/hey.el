@@ -1324,6 +1324,28 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
         (should (= (point) (car starts))))
       (kill-buffer (current-buffer)))))
 
+(ert-deftest hey-ui-header-counts-follow-replacements-and-row-edits ()
+  "Refresh counts after source replacement, row redraw, and a full render."
+  (hey-test-with-list
+    (setq hey--records
+          (plist-get (hey-model-normalize-postings
+                      (hey-test--postings-envelope
+                       (list (hey-test--posting 501 901 "Counted")))
+                      hey--source) :value))
+    (hey--render-list)
+    (should (string-match-p "1/1" (hey--status-header)))
+    (setf (hey-posting-seen (car hey--records)) 'seen)
+    (hey--redraw-postings hey--records)
+    (should (string-match-p "0/1" (hey--status-header)))
+    (setf (hey-posting-seen (car hey--records)) 'unknown)
+    (hey--render-list)
+    (should (string-match-p "?/1" (hey--status-header)))
+    (setq hey--records (list (copy-hey-posting (car hey--records))))
+    (setf (hey-posting-seen (car hey--records)) 'unseen)
+    (should (string-match-p "1/1" (hey--status-header)))
+    (setq hey--records nil)
+    (should (string-match-p "0/0" (hey--status-header)))))
+
 (ert-deftest hey-ui-thread-normalization-warnings-are-visible ()
   (with-temp-buffer
     (hey-thread-mode)
@@ -1673,6 +1695,230 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
       (let ((face (get-text-property (- (point) (length text)) 'face)))
         (should-not (if (listp face) (memq 'hey-metadata-label-face face)
                       (eq face 'hey-metadata-label-face)))))))
+
+(defun hey-list-test--load (raw &optional cursor)
+  "Render normalized synthetic RAW postings with optional CURSOR."
+  (let ((result (hey-model-normalize-postings
+                 (hey-test--postings-envelope raw cursor) hey--source)))
+    (setq hey--records (plist-get result :value)
+          hey--source (plist-get result :source)))
+  (hey--render-list))
+
+(defun hey-list-test--ids ()
+  "Return the composite identities of all displayed rows."
+  (save-excursion
+    (goto-char (point-min))
+    (let (ids)
+      (while (not (eobp))
+        (when-let* ((id (tabulated-list-get-id))) (push id ids))
+        (forward-line 1))
+      (nreverse ids))))
+
+(ert-deftest hey-list-status-and-failure-preserve-mail-rows ()
+  "Leave rows and point intact while changing loading and failure status."
+  (hey-test-with-list
+    (hey-list-test--load (list (hey-test--posting 1 11 "First")
+                              (hey-test--posting 2 12 "Second")) "more")
+    (hey-next-row)
+    (move-to-column 8)
+    (let ((selected (point)) failure)
+      (with-silent-modifications
+        (put-text-property (line-beginning-position) (line-end-position)
+                           'hey-test-row-preserved t))
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _s _p _o _k _g _ok bad) (setq failure bad) nil))))
+      (cl-letf (((symbol-function 'hey--row-vector)
+                 (lambda (&rest _) (ert-fail "Unchanged rows were formatted"))))
+        (hey-load-more)
+        (should (= (point) selected))
+        (should-not (string-match-p "\\[Load more\\]" (buffer-string)))
+        (funcall failure (make-hey-error :category 'network :message "Offline"))
+        (should (= (point) selected))
+        (should (get-text-property (point) 'hey-test-row-preserved))
+        (should (string-match-p "Showing stale results" (buffer-string)))
+        (should (string-match-p "\\[Load more\\]" (buffer-string)))))))
+
+(ert-deftest hey-list-pagination-formats-only-new-identities ()
+  "Append unique rows while preserving prior text, point, counts, and footers."
+  (hey-test-with-list
+    (hey-list-test--load (list (hey-test--posting 1 11 "First")
+                              (hey-test--posting 2 12 "Second")) "more")
+    (hey-next-row)
+    (let ((selected (point))
+          (formatter (symbol-function 'hey--row-vector)) formatted success)
+      (with-silent-modifications
+        (put-text-property (line-beginning-position) (line-end-position)
+                           'hey-test-row-preserved t))
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _s _p _o _k _g ok _bad) (setq success ok) nil))))
+      (cl-letf (((symbol-function 'hey--row-vector)
+                 (lambda (posting now)
+                   (push (hey-posting-id posting) formatted)
+                   (funcall formatter posting now))))
+        (hey-load-more)
+        (should-not formatted)
+        (funcall success
+                 (hey-test--postings-envelope
+                  (list (hey-test--posting 2 12 "Duplicate")
+                        (hey-test--posting 3 13 "Third")) "last"))
+        (should (equal formatted '("3")))
+        (should (equal (hey-list-test--ids) '(("101" "1") ("101" "2") ("101" "3"))))
+        (should (= (point) selected))
+        (should (get-text-property (point) 'hey-test-row-preserved))
+        (should (string-match-p "3/3" (hey--status-header)))
+        (setq formatted nil)
+        (hey-load-more)
+        (funcall success (hey-test--postings-envelope nil))
+        (should-not formatted)
+        (should (= (length (hey-list-test--ids)) 3))
+        (should-not (string-match-p "\\[Load more\\]" (buffer-string)))))))
+
+(ert-deftest hey-list-append-rebuilds-when-membership-columns-appear ()
+  "Fall back to a full render when a new page changes the visible columns."
+  (hey-test-with-list
+    (cl-letf (((symbol-function 'hey--minimum-window-width) (lambda () 130)))
+      (hey-list-test--load '((("id" . 1) ("topic_id" . 11) ("name" . "First"))) "more")
+      (should-not (cl-find "Labels / collections" tabulated-list-format
+                           :key #'car :test #'equal))
+      (let (success)
+        (setq hey--operation-overrides
+              `((hey-cli-box-view
+                 . ,(lambda (_a _s _p _o _k _g ok _bad) (setq success ok) nil))))
+        (hey-load-more)
+        (funcall success (hey-test--postings-envelope
+                          (list (hey-test--posting 2 12 "With labels")))))
+      (should (cl-find "Labels / collections" tabulated-list-format
+                       :key #'car :test #'equal))
+      (should (equal (hey-list-test--ids) '(("101" "1") ("101" "2"))))
+      (dolist (id (hey-list-test--ids))
+        (goto-char (point-min))
+        (while (not (equal (tabulated-list-get-id) id)) (forward-line 1))
+        (should (= (length (tabulated-list-get-entry)) 4))))))
+
+(ert-deftest hey-list-date-cells-survive-resize-and-seen-changes ()
+  "Reuse dates across layout changes while updating read-state presentation."
+  (hey-test-with-list
+    (let ((formatter (symbol-function 'hey-model-format-posting-timestamp))
+          (calls 0))
+      (cl-letf (((symbol-function 'hey-model-format-posting-timestamp)
+                 (lambda (stamp now) (cl-incf calls) (funcall formatter stamp now))))
+        (hey-list-test--load (list (hey-test--posting 1 11 "First")
+                                  (hey-test--posting 2 12 "Second")))
+        (should (= calls 1))
+        (hey--resize-buffer 130)
+        (hey--resize-buffer 40)
+        (setf (hey-posting-seen (car hey--records)) 'seen)
+        (hey--redraw-postings (list (car hey--records)))
+        (should (= calls 1))
+        (should (string-match-p "1/2" (hey--status-header)))
+        (hey--first-row)
+        (should-not (string-prefix-p "●" (aref (tabulated-list-get-entry) 0)))
+        (setf (hey-posting-timestamp (car hey--records)) "2026-09-04T10:00:00")
+        (hey--redraw-postings (list (car hey--records)))
+        (should (= calls 2))))))
+
+(ert-deftest hey-list-date-cache-invalidates-on-context-and-refresh ()
+  "Recompute dates after day, time zone, locale, source, and refresh changes."
+  (hey-test-with-list
+    (let ((now (encode-time 0 0 12 3 9 2026))
+          (process-environment (copy-sequence process-environment))
+          (system-time-locale "C")
+          (formatter (symbol-function 'hey-model-format-posting-timestamp))
+          (calls 0))
+      (cl-letf (((symbol-function 'current-time) (lambda () now))
+                ((symbol-function 'hey-model-format-posting-timestamp)
+                 (lambda (stamp instant)
+                   (cl-incf calls) (funcall formatter stamp instant))))
+        (hey-list-test--load (list (hey-test--posting 1 11 "First")))
+        (should (= calls 1))
+        (setq now (time-add now (days-to-time 1)))
+        (hey--update-list-status)
+        (should (= calls 2))
+        ;; Change the cache input without changing Emacs's process-wide zone.
+        (push "TZ=UTC0" process-environment)
+        (hey--render-list t)
+        (should (= calls 3))
+        (setq system-time-locale "POSIX")
+        (hey--render-list t)
+        (should (= calls 4))
+        (setq hey--source (hey-test--source 'box "feed" "Feed"))
+        (hey--render-list t)
+        (should (= calls 5))
+        (setq hey--operation-overrides
+              `((hey-cli-box-view
+                 . ,(lambda (_a _s _p _o _k _g ok _bad)
+                      (funcall ok (hey-test--postings-envelope
+                                   (list (hey-test--posting 2 12 "Replacement"))))))))
+        (hey-refresh)
+        (should (= calls 6))
+        (should (= (hash-table-count hey--date-cache) 1))))))
+
+(ert-deftest hey-list-status-recovers-after-an-external-table-reprint ()
+  "Detect a displaced footer marker before changing an externally printed table."
+  (hey-test-with-list
+    (hey-list-test--load (list (hey-test--posting 1 11 "First")) "more")
+    (tabulated-list-print t)
+    (setq hey--loading t)
+    (hey--update-list-status)
+    (should (equal (hey-list-test--ids) '(("101" "1"))))
+    (should-not (string-match-p "\\[Load more\\]" (buffer-string)))))
+
+(ert-deftest hey-list-append-matches-a-full-render-after-rows-change ()
+  "Keep incremental output identical to a full render across layouts and dates."
+  (dolist (width '(40 70 100 140))
+    (hey-test-with-list
+      (cl-letf (((symbol-function 'hey--minimum-window-width) (lambda () width)))
+        (hey-list-test--load
+         '((("id" . 1) ("topic_id" . 11) ("name" . "Old")
+            ("created_at" . "1999-09-03T10:00:00"))) "more")
+        (let (success)
+          (setq hey--operation-overrides
+                `((hey-cli-box-view
+                   . ,(lambda (_a _s _p _o _k _g ok _bad) (setq success ok) nil))))
+          (hey-load-more)
+          ;; The acknowledged read state changes while the next page is pending.
+          (setf (hey-posting-seen (car hey--records)) 'seen)
+          (hey--redraw-postings (list (car hey--records)))
+          (funcall success
+                   (hey-test--postings-envelope
+                    '((("id" . 2) ("topic_id" . 12) ("name" . "New")
+                       ("created_at" . "2026-09-03T10:00:00"))) "later")))
+        (let ((incremental (buffer-substring-no-properties (point-min) (point-max))))
+          (hey--render-list t)
+          (should (equal incremental
+                         (buffer-substring-no-properties (point-min) (point-max)))))))))
+
+; Run time zone mutation only in the fresh batch suite, where TZ restores it.
+(ert-deftest hey-list-date-cache-invalidates-when-current-zone-name-is-unchanged ()
+  "Reformat historical dates after a timezone rule change with the same offset."
+  (skip-unless noninteractive)
+  (let ((original-zone (getenv "TZ"))
+        (system-time-locale "C")
+        (now (encode-time 0 0 12 4 1 2026 t))
+        (stamp "2025-07-01T23:30:00Z"))
+    (unwind-protect
+        (with-temp-buffer
+          (hey-list-mode)
+          (setq hey--source (make-hey-source :key '(box "101" "imbox")))
+          (set-time-zone-rule "GMT0BST,M3.5.0/1,M10.5.0")
+          (hey--prepare-date-cache now)
+          (let ((hey--render-date-cache hey--date-cache))
+            (should (equal (hey--list-date stamp now) "Jul 2, 2025")))
+          (let ((old-context (format-time-string "%Y-%m-%d %Z %z" now))
+                (old-environment (getenv "TZ")))
+            (set-time-zone-rule "GMT0")
+            ;; The previous cache key cannot distinguish these rule changes.
+            (should (equal old-context (format-time-string "%Y-%m-%d %Z %z" now)))
+            (should (equal old-environment (getenv "TZ"))))
+          (should (hey--prepare-date-cache now))
+          (let ((hey--render-date-cache hey--date-cache))
+            (should (equal (hey--list-date stamp now) "Jul 1, 2025"))
+            (should (equal-including-properties
+                     (hey--list-date stamp now)
+                     (hey-model-format-posting-timestamp stamp now)))))
+      (set-time-zone-rule original-zone))))
 
 (provide 'hey-test)
 ;;; hey-test.el ends here

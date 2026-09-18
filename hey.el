@@ -188,6 +188,21 @@ Copying and opening a link always use the complete destination."
 (defvar-local hey--configured-account nil)
 (defvar-local hey--source nil)
 (defvar-local hey--records nil)
+(defvar-local hey--count-cache nil
+  "Record list paired with its unread/displayed header text.
+Clear this cache when records change in place, before redrawing rows.")
+(defvar-local hey--date-cache nil
+  "Formatted date cells for the current source and local date context.")
+(defvar-local hey--date-context nil)
+(defvar hey--time-zone-generation 0
+  "Generation of Emacs time zone rules used by prepared dates.")
+(defvar hey--render-date-cache nil
+  "Date cache dynamically bound while preparing a batch of list rows.")
+(defvar-local hey--footer-start nil
+  "Marker separating the rendered mail rows from their status footer.")
+(defvar-local hey--rendered-records nil)
+(defvar-local hey--rendered-columns-key nil)
+(defvar-local hey--rendered-tick nil)
 (defvar-local hey--generation 0)
 (defvar-local hey--request nil)
 (defvar-local hey--loading nil)
@@ -421,6 +436,34 @@ cell's help text, except when the cell already carries its own help text."
       (tabulated-list-init-header)
       t)))
 
+(defun hey--time-zone-changed (&rest _arguments)
+  "Invalidate prepared dates after Emacs changes its time zone."
+  (setq hey--time-zone-generation (1+ hey--time-zone-generation)))
+
+;; Equal present-day offsets do not imply equal historical time zone rules.
+(advice-add 'set-time-zone-rule :after #'hey--time-zone-changed)
+
+(defun hey--prepare-date-cache (now)
+  "Prepare date cells for NOW and return non-nil when their context changed."
+  (let ((context (list (and hey--source (hey-source-key hey--source))
+                       (and now (format-time-string "%Y-%m-%d %Z %z" now))
+                       hey--time-zone-generation (getenv "TZ") system-time-locale
+                       (getenv "LC_ALL") (getenv "LC_TIME") (getenv "LANG"))))
+    (prog1 (not (equal context hey--date-context))
+      (unless (equal context hey--date-context)
+        (setq hey--date-context (copy-tree context)
+              hey--date-cache nil))
+      (unless hey--date-cache
+        (setq hey--date-cache (make-hash-table :test #'equal))))))
+
+(defun hey--list-date (timestamp now)
+  "Return the date cell for TIMESTAMP at NOW, reusing this render's cache."
+  (if (not hey--render-date-cache)
+      (hey-model-format-posting-timestamp timestamp now)
+    (or (gethash timestamp hey--render-date-cache)
+        (puthash timestamp (hey-model-format-posting-timestamp timestamp now)
+                 hey--render-date-cache))))
+
 (defun hey--row-vector (posting now)
   "Return the display vector for normalized POSTING at time NOW."
   (let* ((layout-columns (alist-get hey--layout hey--list-layouts))
@@ -428,8 +471,7 @@ cell's help text, except when the cell already carries its own help text."
          (subject-index (cl-position 'subject layout-columns :key #'car))
          (date-index (cl-position 'date layout-columns :key #'car)))
     (aset row date-index
-          (hey-model-format-posting-timestamp
-           (aref row date-index) now))
+          (hey--list-date (aref row date-index) now))
     (when (eq (hey-posting-kind posting) 'bundle)
       (aset row subject-index
             (concat (aref row subject-index)
@@ -450,9 +492,11 @@ cell's help text, except when the cell already carries its own help text."
 (defun hey--tabulated-entries ()
   "Return tabulated entries from buffer-local normalized records."
   (let ((now (current-time)))
-    (mapcar (lambda (posting)
-              (list (hey-posting-key posting) (hey--row-vector posting now)))
-            hey--records)))
+    (hey--prepare-date-cache now)
+    (let ((hey--render-date-cache hey--date-cache))
+      (mapcar (lambda (posting)
+                (list (hey-posting-key posting) (hey--row-vector posting now)))
+              hey--records))))
 
 (defun hey--error-guidance (error fallback)
   "Return ERROR's recovery hint, or FALLBACK when it is blank."
@@ -515,6 +559,56 @@ cell's help text, except when the cell already carries its own help text."
   (unless (bolp) (insert "\n"))
   (insert "\n" text "\n"))
 
+(defun hey--list-rendered-p (records)
+  "Return non-nil when the current table still displays RECORDS."
+  (and (eq records hey--rendered-records)
+       (equal hey--columns-key hey--rendered-columns-key)
+       (equal hey--rendered-tick (buffer-chars-modified-tick))
+       (markerp hey--footer-start)
+       (eq (marker-buffer hey--footer-start) (current-buffer))))
+
+(defun hey--render-list-footer ()
+  "Update list status and pagination without replacing mail rows."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (delete-region hey--footer-start (point-max))
+      (dolist (text (list (hey--state-message) (hey--load-more-button)))
+        (when text (hey--insert-footer-line text)))))
+  (setq hey--rendered-tick (buffer-chars-modified-tick))
+  (force-mode-line-update))
+
+(defun hey--update-list-status ()
+  "Refresh list status, rebuilding rows only when their presentation changed."
+  (let ((date-changed (hey--prepare-date-cache (current-time))))
+    (hey--configure-columns)
+    (if (and hey--records (not date-changed)
+             (hey--list-rendered-p hey--records))
+        (hey--render-list-footer)
+      (hey--render-list t))))
+
+(defun hey--append-list-rows (postings previous-records)
+  "Append new POSTINGS to the table previously showing PREVIOUS-RECORDS.
+Rebuild the table if its columns or date context changed while fetching."
+  (let* ((now (current-time))
+         (date-changed (hey--prepare-date-cache now)))
+    (hey--configure-columns)
+    (if (not (and previous-records (not date-changed)
+                  (not tabulated-list-sort-key)
+                  (hey--list-rendered-p previous-records)))
+        (hey--render-list t)
+      (let ((inhibit-read-only t)
+            (hey--render-date-cache hey--date-cache))
+        (save-excursion
+          (delete-region hey--footer-start (point-max))
+          (goto-char hey--footer-start)
+          (dolist (posting postings)
+            (tabulated-list-print-entry (hey-posting-key posting)
+                                        (hey--row-vector posting now)))
+          (set-marker hey--footer-start (point)))
+        (setq hey--rendered-records hey--records
+              hey--count-cache nil)
+        (hey--render-list-footer)))))
+
 (defun hey--render-list (&optional preserve-point width)
   "Render cached state, preserving identity when PRESERVE-POINT is non-nil.
 
@@ -523,11 +617,16 @@ When WIDTH is non-nil, use it for responsive column selection."
         (line (line-number-at-pos))
         (column (current-column))
         (inhibit-read-only t))
+    (setq hey--count-cache nil)
     (hey--configure-columns width)
     (setq tabulated-list-entries #'hey--tabulated-entries)
     (tabulated-list-print preserve-point)
-    (dolist (text (list (hey--state-message) (hey--load-more-button)))
-      (when text (hey--insert-footer-line text)))
+    (unless (markerp hey--footer-start)
+      (setq hey--footer-start (make-marker)))
+    (set-marker hey--footer-start (point-max))
+    (setq hey--rendered-records hey--records
+          hey--rendered-columns-key hey--columns-key)
+    (hey--render-list-footer)
     (cond
      ((and identity (equal identity (tabulated-list-get-id))) nil)
      (identity
@@ -547,32 +646,36 @@ When WIDTH is non-nil, use it for responsive column selection."
 (defun hey--redraw-postings (postings)
   "Redraw changed POSTINGS without replacing other rows or footers."
   (when postings
-    (let ((changed (make-hash-table :test 'equal))
-          (identity (tabulated-list-get-id))
-          (column (current-column))
-          (saved-point (copy-marker (point) t))
-          (now (current-time))
-          selected-position)
-      (dolist (posting postings)
-        (puthash (hey-posting-key posting) posting changed))
-      (unwind-protect
-          (with-silent-modifications
-            (goto-char (point-min))
-            (while (and (not (eobp)) (> (hash-table-count changed) 0))
-              (let* ((key (tabulated-list-get-id))
-                     (posting (gethash key changed)))
-                (if (not posting)
-                    (forward-line 1)
-                  (when (equal key identity)
-                    (setq selected-position (point)))
-                  ;; Insert first so markers on the following row stay there.
-                  (tabulated-list-print-entry key (hey--row-vector posting now))
-                  (tabulated-list-delete-entry)
-                  (remhash key changed)))))
-        ;; Follow edits before point, but restore a replaced row's column.
-        (goto-char (or selected-position saved-point))
-        (when selected-position (move-to-column column))
-        (set-marker saved-point nil)))))
+    (setq hey--count-cache nil)
+    (let ((now (current-time)))
+      (if (hey--prepare-date-cache now)
+          (hey--render-list t)
+        (let ((changed (make-hash-table :test 'equal))
+              (identity (tabulated-list-get-id))
+              (column (current-column))
+              (saved-point (copy-marker (point) t))
+              (hey--render-date-cache hey--date-cache)
+              selected-position)
+          (dolist (posting postings)
+            (puthash (hey-posting-key posting) posting changed))
+          (unwind-protect
+              (with-silent-modifications
+                (goto-char (point-min))
+                (while (and (not (eobp)) (> (hash-table-count changed) 0))
+                  (let* ((key (tabulated-list-get-id))
+                         (posting (gethash key changed)))
+                    (if (not posting)
+                        (forward-line 1)
+                      (when (equal key identity)
+                        (setq selected-position (point)))
+                      ;; Insert first so markers on the following row stay there.
+                      (tabulated-list-print-entry key (hey--row-vector posting now))
+                      (tabulated-list-delete-entry)
+                      (remhash key changed)))))
+            ;; Follow edits before point, but restore a replaced row's column.
+            (goto-char (or selected-position saved-point))
+            (when selected-position (move-to-column column))
+            (set-marker saved-point nil)))))))
 
 (defconst hey--header-separator
   (propertize " · " 'face 'hey-header-separator-face)
@@ -587,11 +690,23 @@ When WIDTH is non-nil, use it for responsive column selection."
   "Join non-nil header PARTS with `hey--header-separator'."
   (string-join (delq nil parts) hey--header-separator))
 
+(defun hey--list-count-text ()
+  "Return cached unread/displayed counts for the current record list."
+  (unless (and hey--count-cache (eq (car hey--count-cache) hey--records))
+    (let ((count 0) (unread 0) unknown)
+      (dolist (posting hey--records)
+        (cl-incf count)
+        (pcase (hey-posting-seen posting)
+          ('unseen (cl-incf unread))
+          ('unknown (setq unknown t))))
+      (setq hey--count-cache
+            (cons hey--records (format "%s/%d" (if unknown "?" unread) count)))))
+  (cdr hey--count-cache))
+
 (defun hey--status-header ()
   "Return account, source, unread/displayed counts, and list status.
 Omit lower-priority elements as the window narrows."
-  (let* ((count (length hey--records))
-         (base-state (or (and hey--error (if hey--stale "stale" "error"))
+  (let* ((base-state (or (and hey--error (if hey--stale "stale" "error"))
                         (hey--mark-read-status-text)
                         (cond
                       (hey--loading "loading")
@@ -618,14 +733,7 @@ Omit lower-priority elements as the window narrows."
          (source (hey--header-element (hey--source-title)
                                       'hey-header-source-face))
          (shown (hey--header-element
-                 (format "%s/%d"
-                         (if (cl-some (lambda (posting)
-                                        (eq (hey-posting-seen posting) 'unknown))
-                                      hey--records)
-                             "?"
-                           (cl-count 'unseen hey--records
-                                     :key #'hey-posting-seen))
-                         count)
+                 (hey--list-count-text)
                  'hey-header-count-face))
          (layout (or hey--layout
                      (hey--layout-for-width (hey--minimum-window-width)))))
@@ -711,6 +819,7 @@ the named operation's result."
          (source-key (hey-source-key hey--source))
          (request-source (if append hey--source (hey--reset-source hey--source)))
          (page (and append (hey-source-continuation hey--source)))
+         (previous-records hey--records)
          (old-count (length hey--records))
          (backend hey--operation-overrides)
          (mark-target hey--mark-read-status-target))
@@ -719,7 +828,9 @@ the named operation's result."
     (setq hey--loading t
           hey--error nil
           hey--stale (and (not append) (not (null hey--records))))
-    (hey--render-list t)
+    ;; A fresh read bounds retained date cells to the new snapshot.
+    (unless append (setq hey--date-cache nil))
+    (hey--update-list-status)
     (condition-case error-data
         (setq hey--request
               (hey--dispatch-source
@@ -757,7 +868,10 @@ the named operation's result."
                                   (not (hey--mark-read-pending-p
                                         mark-target backend)))
                          (hey--mark-read-observe mark-target backend incoming))
-                       (hey--render-list t)
+                       (if append
+                           (hey--append-list-rows (nthcdr old-count combined)
+                                                  previous-records)
+                         (hey--render-list t))
                        (when (not (eq (hey-source-kind hey--source) 'search))
                          (when-let* ((target
                                       (cl-find-if
@@ -776,7 +890,7 @@ the named operation's result."
                            hey--stale (not (null hey--records))
                            hey--error error
                            hey--request nil)
-                     (hey--render-list t))))))
+                     (hey--update-list-status))))))
       (error
        (setq hey--loading nil
              hey--stale (not (null hey--records))
@@ -784,7 +898,7 @@ the named operation's result."
              (make-hey-error :category 'configuration
                              :message (error-message-string error-data))
              hey--request nil)
-       (hey--render-list t)))))
+       (hey--update-list-status)))))
 
 (defun hey-refresh ()
   "Refresh the current HEY source from its first page."
@@ -1006,7 +1120,7 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
          (source-key (and hey--source (hey-source-key hey--source)))
          (account-id (hey-account-id hey--account)))
     (setq hey--loading t)
-    (hey--render-list t)
+    (hey--update-list-status)
     (setq hey--request
           (hey--call
            operation account-id buffer source-key generation
@@ -1029,19 +1143,19 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                                (make-hey-error
                                 :category 'empty-inventory
                                 :message "No selectable HEY sources were returned."))
-                         (hey--render-list t))
+                         (hey--update-list-status))
                      (condition-case nil
                          (let ((choice
                                 (completing-read prompt choices nil t)))
                            (hey--switch-source (cdr (assoc choice choices))))
-                       (quit (hey--render-list t))))))))
+                       (quit (hey--update-list-status))))))))
            (lambda (error)
              (when (hey--commit-p buffer source-key generation)
                (with-current-buffer buffer
                  (setq hey--loading nil
                        hey--stale (not (null hey--records))
                        hey--error error hey--request nil)
-                 (hey--render-list t))))))))
+                 (hey--update-list-status))))))))
 
 (defun hey--switch-source (source)
   "Switch the current session to normalized SOURCE and refresh it."
@@ -1073,7 +1187,7 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
          (generation (hey--next-generation))
          (source-key (and hey--source (hey-source-key hey--source))))
     (setq hey--loading t)
-    (hey--render-list t)
+    (hey--update-list-status)
     (setq hey--request
           (hey--call
            'hey-cli-account-list buffer source-key generation
@@ -1102,21 +1216,21 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                                (make-hey-error
                                 :category 'empty-inventory
                                 :message "No linked HEY accounts were returned."))
-                         (hey--render-list t))
+                         (hey--update-list-status))
                      (condition-case nil
                          (let ((choice
                                 (completing-read "HEY account: "
                                                  choices nil t)))
                            (hey--activate-account
                             (cdr (assoc choice choices))))
-                       (quit (hey--render-list t))))))))
+                       (quit (hey--update-list-status))))))))
            (lambda (error)
              (when (hey--commit-p buffer source-key generation)
                (with-current-buffer buffer
                  (setq hey--loading nil
                        hey--stale (not (null hey--records))
                        hey--error error hey--request nil)
-                 (hey--render-list t))))))))
+                 (hey--update-list-status))))))))
 
 (defun hey-search (query)
   "Search the current HEY account for QUERY without recording history."
@@ -1853,6 +1967,12 @@ Ignore lookup errors to keep this `post-command-hook' function active."
 (set-keymap-parent hey-thread-mode-map hey-common-map)
 
 (add-hook 'window-size-change-functions #'hey--window-size-change)
+
+(defun hey-unload-function ()
+  "Remove global hooks and advice before unloading HEY."
+  (remove-hook 'window-size-change-functions #'hey--window-size-change)
+  (advice-remove 'set-time-zone-rule #'hey--time-zone-changed)
+  nil)
 
 ;;; Attachments
 
