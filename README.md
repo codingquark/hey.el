@@ -194,6 +194,14 @@ and `install-check`; `read-only-check` remains an alias for `operation-check`.
 The package archive in `dist/` contains the three runtime libraries,
 `LICENSE`, and a generated `hey-pkg.el` derived from the headers in `hey.el`.
 
+Run `make benchmark` to measure normalization, list and thread rendering,
+header updates, message navigation, attachment lists, and transport helpers.
+List workloads cover cold and warm rendering, refresh status, and page appends;
+thread workloads include the first screen of a long conversation.
+It uses compiled package code and synthetic data, starts no subprocesses, and
+reports the median of five samples with garbage collection included. Timings
+are diagnostic, with no pass/fail threshold, and exclude CLI and network latency.
+
 To try the interface with sample mail, run this from the checkout after
 `make bootstrap`:
 

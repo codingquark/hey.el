@@ -7,7 +7,7 @@ EMACS_BATCH = HEY_ELPA_DIR="$(ELPA_DIR)" \
 	HEY_PACKAGE_FILE="$(PACKAGE_FILE)" \
 	$(EMACS) -Q --batch
 
-.PHONY: bootstrap test compile lint operation-check read-only-check package install-check check
+.PHONY: bootstrap test compile benchmark lint operation-check read-only-check package install-check check
 
 bootstrap:
 	$(EMACS_BATCH) -l "$(CURDIR)/tools/bootstrap.el"
@@ -17,6 +17,9 @@ test: bootstrap
 
 compile: bootstrap
 	$(EMACS_BATCH) -l "$(CURDIR)/tools/compile.el"
+
+benchmark: compile
+	$(EMACS_BATCH) -l "$(CURDIR)/tools/benchmark.el"
 
 lint: bootstrap
 	$(EMACS_BATCH) -l "$(CURDIR)/tools/lint.el"
