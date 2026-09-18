@@ -16,7 +16,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'calendar)
 (require 'iso8601)
 (require 'subr-x)
 (require 'url-parse)
@@ -180,8 +179,14 @@ ANSI control sequences, C0/C1 controls, and Unicode bidirectional controls
 are removed.  Tabs and line breaks become ordinary spaces, runs of ASCII
 spacing collapse, and surrounding spacing is trimmed.  Non-string input
 produces the empty string so absent and null JSON fields remain non-fatal."
-  (if (not (stringp string))
-      ""
+  (cond
+   ((not (stringp string)) "")
+   ;; Most metadata is already clean; avoid allocating replacement strings.
+   ((not (string-match-p
+          "[\x00-\x1f\x7f\u0080-\u009f\x80-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]\\|\\` \\| \\'\\|  "
+          string))
+    string)
+   (t
     (let ((value string))
       ;; Remove complete terminal sequences before removing their ESC bytes.
       (setq value
@@ -189,13 +194,15 @@ produces the empty string so absent and null JSON fields remain non-fatal."
              "\e\\(?:\\[[0-?]*[ -/]*[@-~]\\|\\][^\a\e]*\\(?:\a\\|\e\\\\\\)\\|[PX^_][^\e]*\e\\\\\\|[@-_]\\)"
              "" value t t))
       (setq value (replace-regexp-in-string "[\t\n\r]+" " " value t t))
+      ;; Unicode C1 characters and raw byte values need separate ranges.
       (setq value
             (replace-regexp-in-string
-             "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]" "" value t t))
+             "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u0080-\u009f\x80-\x9f]"
+             "" value t t))
       (setq value
             (replace-regexp-in-string
              "[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]" "" value t t))
-      (string-trim (replace-regexp-in-string " +" " " value t t)))))
+      (string-trim (replace-regexp-in-string " +" " " value t t))))))
 
 (defun hey-model-validate-app-url (string)
   "Return STRING for an exact official HEY-origin URL; otherwise return nil.
@@ -657,17 +664,19 @@ and `:warnings'.  Preserve SOURCE."
 
 (defun hey-model-normalize-attachments (envelope)
   "Normalize attachment ENVELOPE into records, warnings, and a notice."
-  (let ((data (hey-model--array-data envelope)) records warnings ids)
+  (let ((data (hey-model--array-data envelope))
+        (ids (make-hash-table :test #'equal))
+        records warnings)
     (if (eq data 'malformed)
         (push "Attachment response does not contain a list." warnings)
       (dolist (raw data)
         (let ((id (hey-model--attachment-id (hey-model--get "id" raw)))
               (message-id (hey-model--id-string (hey-model--get "message_id" raw)))
               (size (hey-model--get "byte_size" raw)))
-          (if (or (not id) (not message-id) (member id ids))
+          (if (or (not id) (not message-id) (gethash id ids))
               (push "An attachment with an invalid or duplicate identity was skipped."
                     warnings)
-            (push id ids)
+            (puthash id t ids)
             (push (make-hey-attachment
                    :id id :message-id message-id
                    :filename (hey-model--clean-string (hey-model--get "filename" raw))
@@ -743,10 +752,11 @@ Return `:value' as one `hey-thread' and non-fatal `:warnings'."
                               "thread entry" index "missing or unsafe id")
                              warnings)))
     (setq entries (nreverse entries))
-    (let (senders app-url)
+    (let ((sender-set (make-hash-table :test #'equal)) senders app-url)
       (dolist (entry entries)
         (let ((sender (hey-entry-sender entry)))
-          (unless (or (string-empty-p sender) (member sender senders))
+          (unless (or (string-empty-p sender) (gethash sender sender-set))
+            (puthash sender t sender-set)
             (push sender senders)))
         (unless app-url (setq app-url (hey-entry-app-url entry))))
       (list
@@ -786,33 +796,42 @@ Return `:value' as one `hey-thread' and non-fatal `:warnings'."
                             (id id)))))
                 memberships)))
 
+(defun hey-model--format-membership-names (names full max-width)
+  "Fit sanitized NAMES and their joined FULL text within MAX-WIDTH columns."
+  (let ((width (and (integerp max-width) (max 0 max-width))))
+    (cond
+     ((string-empty-p full) "")
+     ((or (null width) (<= (string-width full) width)) full)
+     ((zerop width) (propertize "" 'help-echo full))
+     (t
+      (let ((rest names) (remaining (length names))
+            (separator-width (string-width ", "))
+            (count 0) (prefix-width 0) (shown 0) suffix)
+        ;; Measure each name once and build only the longest fitting prefix.
+        (while rest
+          (setq prefix-width (+ prefix-width (if (zerop count) 0 separator-width)
+                                (string-width (car rest)))
+                count (1+ count)
+                remaining (1- remaining))
+          (let ((tail (if (> remaining 0) (format " +%d" remaining) "")))
+            (if (<= (+ prefix-width (string-width tail)) width)
+                (setq shown count suffix tail rest (cdr rest))
+              (setq rest nil))))
+        (propertize
+         (if (> shown 0)
+             (concat (string-join (cl-subseq names 0 shown) ", ") suffix)
+           (truncate-string-to-width (car names) width nil nil "…"))
+         'help-echo full))))))
+
 (defun hey-model-format-memberships (memberships max-width)
   "Format ordered MEMBERSHIPS within MAX-WIDTH columns.
 
 The result is comma-separated.  Overflow is summarized as ` +N', for example
 `Receipts, Travel +2'.  A truncated result carries the complete text in its
 `help-echo' property.  MAX-WIDTH nil means unbounded."
-  (let* ((names (hey-model--membership-names memberships))
-         (full (string-join names ", "))
-         (width (and (integerp max-width) (max 0 max-width))))
-    (cond
-     ((string-empty-p full) "")
-     ((or (null width) (<= (string-width full) width)) full)
-     ((zerop width) (propertize "" 'help-echo full))
-     (t
-      (let ((count 0) best)
-        (while (< count (length names))
-          (let* ((shown (1+ count))
-                 (remaining (- (length names) shown))
-                 (candidate
-                  (concat (string-join (cl-subseq names 0 shown) ", ")
-                          (if (> remaining 0) (format " +%d" remaining) ""))))
-            (if (<= (string-width candidate) width)
-                (setq best candidate count shown)
-              (setq count (length names)))))
-        (unless best
-          (setq best (truncate-string-to-width (car names) width nil nil "…")))
-        (propertize best 'help-echo full))))))
+  (let ((names (hey-model--membership-names memberships)))
+    (hey-model--format-membership-names
+     names (string-join names ", ") max-width)))
 
 ;; When both kinds are present, MAX-WIDTH reserves 5 columns for the " · " and
 ;; "◇ " separators and splits the rest three-to-two in favour of labels.  A
@@ -821,6 +840,10 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
   "Return a compact membership cell for POSTING within MAX-WIDTH columns."
   (let* ((label-records (hey-posting-labels posting))
          (collection-records (hey-posting-collections posting))
+         (label-names (hey-model--membership-names label-records))
+         (collection-names (hey-model--membership-names collection-records))
+         (full-labels (string-join label-names ", "))
+         (full-collections (string-join collection-names ", "))
          (bounded (and (integerp max-width) (max 0 max-width)))
          (both (and label-records collection-records))
          (content-width (and bounded (max 0 (- bounded (if both 5 0)))))
@@ -830,9 +853,10 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
          (collection-width (and content-width
                                 (if both (- content-width label-width)
                                   (max 0 (- content-width 2)))))
-         (labels (hey-model-format-memberships label-records label-width))
-         (collections (hey-model-format-memberships
-                       collection-records collection-width))
+         (labels (hey-model--format-membership-names
+                  label-names full-labels label-width))
+         (collections (hey-model--format-membership-names
+                       collection-names full-collections collection-width))
          (cell
           (cond
            ((and (not (string-empty-p labels))
@@ -847,12 +871,6 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
             (propertize (concat "◇ " collections)
                         'face 'hey-collection-face))
            (t "")))
-         (full-labels (string-join
-                       (hey-model--membership-names (hey-posting-labels posting))
-                       ", "))
-         (full-collections
-          (string-join
-           (hey-model--membership-names (hey-posting-collections posting)) ", "))
          (help (string-join
                 (delq nil
                       (list (and (not (string-empty-p full-labels))
@@ -864,14 +882,6 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
       (setq cell (truncate-string-to-width
                   cell bounded nil nil "…")))
     (if (string-empty-p help) cell (propertize cell 'help-echo help))))
-
-(defun hey-model--local-date-number (time)
-  "Return the absolute local calendar date containing TIME."
-  (let ((decoded (decode-time time)))
-    (calendar-absolute-from-gregorian
-     (list (decoded-time-month decoded)
-           (decoded-time-day decoded)
-           (decoded-time-year decoded)))))
 
 (defun hey-model-format-posting-timestamp (timestamp now)
   "Format posting TIMESTAMP relative to NOW in the local time zone.
@@ -888,16 +898,19 @@ and retain the sanitized source timestamp in help text when reformatted."
                 (let* ((time (encode-time (iso8601-parse clean)))
                        (decoded (decode-time time))
                        (now-decoded (decode-time now))
-                       (month (format-time-string "%b" time))
                        (day (decoded-time-day decoded))
                        (year (decoded-time-year decoded)))
                   (cond
-                   ((= (hey-model--local-date-number now)
-                       (hey-model--local-date-number time))
-                    (format-time-string "%H:%M" time))
+                   ((and (= year (decoded-time-year now-decoded))
+                         (= (decoded-time-month decoded)
+                            (decoded-time-month now-decoded))
+                         (= day (decoded-time-day now-decoded)))
+                    (format "%02d:%02d" (decoded-time-hour decoded)
+                            (decoded-time-minute decoded)))
                    ((= year (decoded-time-year now-decoded))
-                    (format "%s %d" month day))
-                   (t (format "%s %d, %d" month day year))))
+                    (format "%s %d" (format-time-string "%b" time) day))
+                   (t (format "%s %d, %d" (format-time-string "%b" time)
+                              day year))))
               (error clean)))))
     (cond
      ((string-empty-p display) display)

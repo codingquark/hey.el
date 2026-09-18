@@ -39,6 +39,24 @@
                    "Alpha Beta Gamma red tail")))
   (should (equal (hey-model-sanitize-metadata nil) "")))
 
+(ert-deftest hey-model-sanitizes-every-control-range-and-spacing-boundary ()
+  (dolist (code (append (number-sequence 0 31) (number-sequence 127 159)
+                       '(#x061c #x200e #x200f)
+                       (number-sequence #x202a #x202e)
+                       (number-sequence #x2066 #x2069)))
+    (should (equal (hey-model-sanitize-metadata
+                    (concat "left" (string code) "123"))
+                   (if (memq code '(9 10 13)) "left 123" "left123"))))
+  (dolist (code (number-sequence 128 159))
+    (should (equal (hey-model-sanitize-metadata
+                    (concat "left" (unibyte-string code) "123"))
+                   "left123")))
+  (dolist (input '("  alpha beta  " "alpha  beta" "alpha\tbeta"
+                   "\nalpha beta\r"))
+    (should (equal (hey-model-sanitize-metadata input) "alpha beta")))
+  (dolist (clean '("" "alpha beta" "漢字 café" "a b"))
+    (should (equal (hey-model-sanitize-metadata clean) clean))))
+
 (ert-deftest hey-model-validates-only-the-official-application-origin ()
   (should (equal (hey-model-validate-app-url
                   "https://app.hey.com/topics/77?view=all#entry-1")
@@ -437,6 +455,61 @@ it, and a malformed literal fails at the browser rather than here."
     (should (equal (get-text-property 0 'help-echo formatted)
                    "Planning, Receipts, Travel")))
   (should (equal (hey-model-format-memberships nil 20) "")))
+
+(ert-deftest hey-model-memberships-fit-display-width-and-count-digits ()
+  (let* ((memberships (mapcar (lambda (name) (make-hey-membership :name name))
+                             '("界" "漢" "字")))
+         (full "界, 漢, 字"))
+    (dolist (case '((5 . "界 +2") (9 . "界, 漢 +1") (10 . "界, 漢, 字")))
+      (let ((formatted (hey-model-format-memberships memberships (car case))))
+        (should (equal (substring-no-properties formatted) (cdr case)))
+        (should (<= (string-width formatted) (car case)))
+        (when (< (car case) 10)
+          (should (equal (get-text-property 0 'help-echo formatted) full)))))
+    (should (equal (hey-model-format-memberships memberships 0) "")))
+  (let ((memberships (make-list 12 (make-hey-membership :name "a"))))
+    (should (equal (hey-model-format-memberships memberships 5) "a +11"))
+    (should (equal (hey-model-format-memberships memberships 8) "a, a +10"))
+    (should (equal (hey-model-format-memberships memberships 10)
+                   "a, a, a +9"))))
+
+(ert-deftest hey-model-memberships-honor-the-buffer-display-table ()
+  (with-temp-buffer
+    (setq buffer-display-table (make-display-table))
+    (aset buffer-display-table ?, (vector ?x ?x ?x))
+    (let* ((memberships (mapcar (lambda (name) (make-hey-membership :name name))
+                               '("a" "b" "c")))
+           (formatted (hey-model-format-memberships memberships 10)))
+      (should (equal formatted "a, b +1"))
+      (should (<= (string-width formatted) 10))
+      (should (equal (get-text-property 0 'help-echo formatted) "a, b, c")))))
+
+(ert-deftest hey-model-deduplicates-attachments-with-first-valid-identity ()
+  (let* ((originals (cl-loop for id from 1 to 1000
+                             collect `(("id" . ,(format "%d:1" id))
+                                       ("message_id" . ,id)
+                                       ("filename" . "original.pdf"))))
+         (invalid '(("id" . "1:1") ("message_id" . "--unsafe")))
+         (duplicate '(("id" . "1:1") ("message_id" . 1)
+                      ("filename" . "duplicate.pdf")))
+         (result (hey-model-normalize-attachments
+                  `(("data" . ,(append (list invalid) originals
+                                       (list duplicate))))))
+         (records (plist-get result :value)))
+    (should (= (length records) 1000))
+    (should (= (length (plist-get result :warnings)) 2))
+    (should (equal (mapcar #'hey-attachment-id records)
+                   (mapcar (lambda (raw) (cdr (assoc "id" raw))) originals)))
+    (should (equal (hey-attachment-filename (car records)) "original.pdf"))))
+
+(ert-deftest hey-model-thread-senders-keep-first-occurrence-order ()
+  (let* ((names '("Alice" "Bob" "Alice" "" "Carol" "Bob"))
+         (entries (cl-loop for name in names for id from 1
+                           collect `(("id" . ,id)
+                                     ("alternative_sender_name" . ,name))))
+         (result (hey-model-normalize-thread `(("data" . ,entries)) nil)))
+    (should (equal (hey-thread-senders (plist-get result :value))
+                   '("Alice" "Bob" "Carol")))))
 
 (ert-deftest hey-model-posting-row-has-four-frozen-layouts ()
   (let* ((posting (car

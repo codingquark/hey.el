@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reduce repeated metadata, membership, and date formatting work. Deduplicate
+  attachments and thread senders with hash tables while preserving their order.
+- Remove Unicode C1 controls from metadata as well as raw control bytes.
 - Mark one thread read with `r` in list and thread buffers. Keep opening a
   thread free of mailbox changes. Retain posting identity, update matching
   rows after acknowledgment, and check read state without moving point.
