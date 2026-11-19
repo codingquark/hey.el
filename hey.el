@@ -448,7 +448,7 @@ cell's help text, except when the cell already carries its own help text."
       t)))
 
 (defun hey--time-zone-changed (&rest _arguments)
-  "Invalidate prepared dates after Emacs changes its time zone."
+  "Invalidate cached dates after a time zone change."
   (setq hey--time-zone-generation (1+ hey--time-zone-generation)))
 
 ;; Equal present-day offsets do not imply equal historical time zone rules.

@@ -208,7 +208,8 @@ When TEXT is nil, require silence."
           (with-current-buffer two
             (hey-mark-test--thread backend)
             (should-error (hey-mark-read) :type 'user-error)
-            (setq hey--operation-overrides (copy-tree backend))
+            ;; Give the backend a distinct identity while sharing its callbacks.
+            (setq hey--operation-overrides (copy-sequence backend))
             (hey-mark-read))
           (should (= calls 2)))
       (kill-buffer one)
@@ -234,7 +235,7 @@ When TEXT is nil, require silence."
               (hey-list-mode)
               (setq hey--source (hey-mark-test--source)
                     hey--records (list (hey-mark-test--posting "71"))
-                    hey--operation-overrides (copy-tree backend))))
+                    hey--operation-overrides (copy-sequence backend))))
           (with-current-buffer three
             (setq hey--source (hey-mark-test--source 'box "202")
                   hey--records (list (hey-mark-test--posting "71" 'unseen "202"))
