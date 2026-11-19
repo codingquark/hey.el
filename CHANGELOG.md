@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show at least ten entries when opening or refreshing The Feed, when
+  available. Display each page as it arrives and keep point on the current row.
 - Keep rendered messages in place when a thread refresh returns the same
   content. Append new replies or replace the final message without rebuilding
   the earlier entries.

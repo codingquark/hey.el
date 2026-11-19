@@ -626,7 +626,7 @@ by account/posting ID.  Keep the literal `all' account in row keys because
 the CLI does not reliably identify each row's originating account.
 
 Return `:value' records, `:source' as a copy with updated continuation,
-and `:warnings'.  Preserve SOURCE."
+`:box-kind' when supplied for a box, and `:warnings'.  Preserve SOURCE."
   (let* ((search-p (hey-model--known-kind-p (hey-source-kind source) 'search))
          (data (hey-model--get "data" envelope))
          (raw-records (if search-p data (hey-model--get "postings" data)))
@@ -654,7 +654,10 @@ and `:warnings'.  Preserve SOURCE."
     (pcase-let ((`(,updated . ,all-warnings)
                  (hey-model--source-with-continuation
                   source envelope values warnings)))
-      (list :value values :source updated :warnings (nreverse all-warnings)))))
+      (list :value values :source updated :warnings (nreverse all-warnings)
+            :box-kind (and (hey-model--known-kind-p (hey-source-kind source) 'box)
+                           (hey-model--command-target-string
+                            (hey-model--get "kind" data)))))))
 
 (defun hey-model-envelope-notice (envelope)
   "Return sanitized, single-line notice text from ENVELOPE, or nil."

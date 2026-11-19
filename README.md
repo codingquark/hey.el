@@ -82,6 +82,10 @@ When more results are available, the list also has a `[Load more]` button.
 Activate it with `RET` or mouse-2. Opening a bundle shows its contact's seen
 and unseen mail when available.
 
+Opening or refreshing The Feed shows the first page as soon as it arrives.
+You can read those rows while Emacs fetches one page at a time until it
+shows at least ten entries or runs out of results. Press `M` for the next page.
+
 The header counts unread entries among the displayed results: `3/20` means
 three unread out of twenty displayed. Search results have unknown read state
 and show `?/20`; an empty list shows `0/0`. Outside search, mail counts as

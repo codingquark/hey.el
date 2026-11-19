@@ -864,6 +864,105 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
       (funcall revert-buffer-function nil nil)
       (should (= calls 2)))))
 
+(ert-deftest hey-ui-feed-shows-pages-progressively-and-keeps-the-last-page-whole ()
+  "Show early rows while fetching and leave the next cursor for manual use."
+  (hey-test-with-list
+    (let (pages success)
+      (setq hey--source (hey-test--source 'box "feedbox" "Newsletters")
+            hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _box page _owner _key _gen ok _bad)
+                    (push page pages)
+                    (setq success ok)
+                    nil))))
+      (cl-flet ((deliver (ids cursor)
+                  (funcall success
+                           (hey-test--postings-envelope
+                            (mapcar (lambda (id) (hey-test--posting id id "Mail"))
+                                    ids)
+                            cursor))))
+        (hey-refresh)
+        (should (equal pages '(nil)))
+        (deliver '(1 2) "p2")
+        (should (equal pages '("p2" nil)))
+        (should hey--loading)
+        (hey-next-row)
+        (should (equal (tabulated-list-get-id) '("101" "2")))
+        (deliver '(2 3 4 5 6 7 8 9) "p3")
+        (should (= (length hey--records) 9))
+        (should (equal pages '("p3" "p2" nil)))
+        (deliver '(10 11) "p4")
+        (should (= (length hey--records) 11))
+        (should-not hey--loading)
+        (should (equal (tabulated-list-get-id) '("101" "2")))
+        (should (string-match-p "\\[Load more\\]" (buffer-string)))
+        (hey-load-more)
+        (deliver '(12) "p5")
+        (should (equal pages '("p4" "p3" "p2" nil)))
+        (should (= (length hey--records) 12))
+        (should-not hey--loading)))))
+
+(ert-deftest hey-ui-feed-formats-ten-rows-on-five-short-pages ()
+  "Stop at ten rows and format each posting once."
+  (hey-test-with-list
+    (let ((formatter (symbol-function 'hey--row-vector))
+          pages formatted)
+      (setq hey--source (hey-test--source 'box "feed" "The Feed")
+            hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _box page _owner _key _gen ok _bad)
+                    (let ((id (if page (string-to-number page) 1)))
+                      (should (<= id 9))
+                      (push page pages)
+                      (funcall ok (hey-test--postings-envelope
+                                   (list (hey-test--posting id id "First")
+                                         (hey-test--posting (1+ id) (1+ id) "Second"))
+                                   (number-to-string (+ id 2)))))))))
+      (cl-letf (((symbol-function 'hey--row-vector)
+                 (lambda (posting now)
+                   (push (hey-posting-id posting) formatted)
+                   (funcall formatter posting now))))
+        (hey-refresh))
+      (should (equal (reverse pages) '(nil "3" "5" "7" "9")))
+      (should (equal (reverse formatted) (mapcar #'number-to-string (number-sequence 1 10))))
+      (should (equal (hey-source-continuation hey--source) "11"))
+      (should-not hey--error)
+      (should-not hey--loading))))
+
+(ert-deftest hey-ui-feed-stops-on-failure-and-ignores-superseded-pages ()
+  "Resolve a numeric Feed by kind and keep background pages session-local."
+  (hey-test-with-list
+    (let (success failure pages)
+      (setq hey--source (hey-test--source 'box "27" "Newsletters")
+            hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a box page _owner _key _gen ok bad)
+                    (push (list box page) pages)
+                    (setq success ok failure bad)
+                    nil))))
+      (let ((short-page '(("data" ("kind" . "feedbox")
+                                  ("postings" (("id" . 1) ("name" . "First")))
+                                  ("next_page" . "p2")))))
+        (hey-refresh)
+        (funcall success short-page)
+        (funcall failure (make-hey-error :category 'network :message "Offline"))
+        (should (equal (hey-source-continuation hey--source) "p2"))
+        (should (string-match-p "\\[Load more\\]" (buffer-string)))
+        (should (= (length hey--records) 1))
+        (hey-refresh)
+        (funcall success short-page)
+        (let ((late success))
+          (hey--switch-source (hey-test--source))
+          (funcall late short-page)
+          (should-not hey--records)
+          (funcall success (hey-test--postings-envelope
+                            (list (hey-test--posting 50 50 "Imbox")) "more"))
+          (should-not hey--loading)
+          (should (equal (mapcar #'hey-posting-id hey--records) '("50")))
+          (should (equal (reverse pages)
+                         '(("27" nil) ("27" "p2") ("27" nil) ("27" "p2")
+                           ("imbox" nil)))))))))
+
 (ert-deftest hey-ui-load-more-deduplicates-and-stops-nonadvancing-cursors ()
   (hey-test-with-list
     (let ((responses

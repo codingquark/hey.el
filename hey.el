@@ -834,8 +834,34 @@ the named operation's result."
     (setq hey--posting-index index)
     additions))
 
+(defconst hey--feed-initial-rows 10
+  "Minimum number of rows to show when opening or refreshing The Feed.")
+
+(defun hey--continue-list-read (normalized append backend)
+  "Handle pending read acknowledgments or fetch another initial Feed page.
+NORMALIZED describes the page just displayed.  APPEND and BACKEND identify
+the read that produced it."
+  (unless (eq (hey-source-kind hey--source) 'search)
+    (let ((target (cl-find-if
+                   (lambda (identity)
+                     (cl-some (lambda (posting)
+                                (hey--posting-matches-target-p posting identity))
+                              hey--records))
+                   hey--read-acknowledgements)))
+      (cond
+       (target (hey--mark-read-reconcile target backend))
+       ((and (hey--continuation-p)
+             (or (eq append 'feed)
+                 (and (null append) (eq (hey-source-kind hey--source) 'box)
+                      (member (downcase (or (plist-get normalized :box-kind)
+                                            (hey-source-id hey--source)))
+                              '("feed" "feedbox" "the feed"))))
+             (length< hey--records hey--feed-initial-rows))
+        (hey--refresh 'feed))))))
+
 (defun hey--refresh (&optional append)
-  "Refresh the current source, or APPEND its next page."
+  "Refresh the current source, or APPEND its next page.
+Use the symbol `feed' for an automatic append during the initial Feed read."
   (unless (and (derived-mode-p 'hey-list-mode) (hey-source-p hey--source))
     (user-error "This is not an initialized HEY list"))
   (when (and append
@@ -849,7 +875,8 @@ the named operation's result."
          (page (and append (hey-source-continuation hey--source)))
          (previous-records hey--records)
          (backend hey--operation-overrides)
-         (mark-target hey--mark-read-status-target))
+         (mark-target hey--mark-read-status-target)
+         request)
     (unless (hey--mark-read-pending-p mark-target backend)
       (setq hey--mark-read-status nil))
     (setq hey--loading t
@@ -859,7 +886,7 @@ the named operation's result."
     (unless append (setq hey--date-cache nil))
     (hey--update-list-status)
     (condition-case error-data
-        (setq hey--request
+        (setq request
               (hey--dispatch-source
                request-source page buffer source-key generation
                (lambda (envelope)
@@ -880,7 +907,8 @@ the named operation's result."
                          (setf (hey-source-continuation updated-source) nil
                                (hey-source-exhausted updated-source) t))
                        (setq hey--source updated-source
-                             hey--warnings (plist-get normalized :warnings)
+                             hey--warnings (append (and (eq append 'feed) hey--warnings)
+                                                   (plist-get normalized :warnings))
                              hey--loading nil
                              hey--stale nil
                              hey--error nil
@@ -897,17 +925,7 @@ the named operation's result."
                        (if append
                            (hey--append-list-rows additions previous-records)
                          (hey--render-list t))
-                       (when (not (eq (hey-source-kind hey--source) 'search))
-                         (when-let* ((target
-                                      (cl-find-if
-                                       (lambda (identity)
-                                         (cl-some
-                                          (lambda (posting)
-                                            (hey--posting-matches-target-p
-                                             posting identity))
-                                          hey--records))
-                                       hey--read-acknowledgements)))
-                           (hey--mark-read-reconcile target backend)))))))
+                       (hey--continue-list-read normalized append backend)))))
                (lambda (error)
                  (when (hey--commit-p buffer source-key generation)
                    (with-current-buffer buffer
@@ -923,7 +941,10 @@ the named operation's result."
              (make-hey-error :category 'configuration
                              :message (error-message-string error-data))
              hey--request nil)
-       (hey--update-list-status)))))
+       (hey--update-list-status)))
+    ;; A synchronous callback may already have started the next page.
+    (when (and hey--loading (= generation hey--generation))
+      (setq hey--request request))))
 
 (defun hey-refresh ()
   "Refresh the current HEY source from its first page."
