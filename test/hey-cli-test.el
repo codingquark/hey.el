@@ -259,6 +259,32 @@ the retry instruction."
             (should-not (string-match-p (regexp-quote (nth 2 case))
                                        (buffer-string)))))))))
 
+(ert-deftest hey-cli-transport-preserves-auth-error-after-cache-warning ()
+  (hey-test-with-fake '(:scenario "auth-refused-cache-warning")
+    (with-temp-buffer
+      (let (failure)
+        (hey-cli-test--start-version
+         (current-buffer) (lambda (_value) (ert-fail "Expected a CLI error"))
+         (lambda (error) (setq failure error)))
+        (hey-test-await (lambda () failure))
+        (should (eq (hey-error-category failure) 'auth))
+        (should (equal (hey-error-code failure) "auth"))
+        (should (equal (hey-error-hint failure) "Run: hey auth login"))
+        (should (string-suffix-p "The CLI could not clear its HTTP cache."
+                                 (hey-error-message failure)))
+        (should-not (string-match-p "private-cache" (hey-error-message failure)))
+        (with-current-buffer "*hey-log*"
+          (should-not (string-match-p "private-cache" (buffer-string))))))))
+
+(ert-deftest hey-cli-transport-rejects-other-text-around-structured-errors ()
+  (let ((warning "warning: could not clear cached responses in /synthetic/cache: failed\n")
+        (auth "{\"ok\":false,\"code\":\"auth\",\"error\":\"Sign in\"}\n")
+        (other "{\"ok\":false,\"code\":\"api\",\"error\":\"Failed\"}\n"))
+    (should-not (hey-cli--structured-cli-error (concat "warning: other\n" auth) 3))
+    (should-not (hey-cli--structured-cli-error (concat warning auth) 7))
+    (should-not (hey-cli--structured-cli-error (concat warning other) 3))
+    (should-not (hey-cli--structured-cli-error (concat warning auth "trailing text") 3))))
+
 (ert-deftest hey-cli-transport-allows-success-with-redacted-stderr-note ()
   (hey-test-with-fake '(:scenario "stderr-success")
     (when (get-buffer "*hey-log*") (kill-buffer "*hey-log*"))

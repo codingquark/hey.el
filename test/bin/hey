@@ -34,7 +34,10 @@ case $scenario in
     [ "$scenario" != mark-read-delay ] || sleep 2
     cat "$fixture_dir/mark-read-success.json"
     ;;
-  auth-refused)
+  auth-refused|auth-refused-cache-warning)
+    if [ "$scenario" = auth-refused-cache-warning ]; then
+      printf '%s\n' 'warning: could not clear cached responses in /synthetic/private-cache/http: permission denied' >&2
+    fi
     cat "$fixture_dir/auth-refused.json" >&2
     exit 3
     ;;

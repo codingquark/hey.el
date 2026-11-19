@@ -617,14 +617,27 @@ CATEGORY and EXIT-STATUS are used only for redacted diagnostics."
 (defun hey-cli--structured-cli-error (stderr status)
   "Return a `hey-error' from structured STDERR for exit STATUS, or nil."
   (condition-case nil
-      (let ((envelope (hey-cli--parse-json stderr)))
+      (let* (;; A refused refresh can emit this one local warning before JSON.
+             ;; Reduce it to a fixed message so the cache path stays private.
+             (cache-warning-end
+              (and (= status 3)
+                   (string-prefix-p "warning: could not clear cached responses in "
+                                    stderr)
+                   (string-match-p "\n" stderr)))
+             (envelope (hey-cli--parse-json
+                        (if cache-warning-end
+                            (substring stderr (1+ cache-warning-end))
+                          stderr))))
         (when (hey-cli--error-envelope-p envelope)
-          (hey-cli--make-error
-           (hey-cli--exit-category status)
-           (hey-cli--field "error" envelope)
-           (hey-cli--field "code" envelope)
-           (hey-cli--field "hint" envelope)
-           status)))
+          (let ((code (hey-cli--field "code" envelope))
+                (message (hey-cli--field "error" envelope)))
+            (when (or (not cache-warning-end) (equal code "auth"))
+              (hey-cli--make-error
+               (hey-cli--exit-category status)
+               (if cache-warning-end
+                   (concat message " The CLI could not clear its HTTP cache.")
+                 message)
+               code (hey-cli--field "hint" envelope) status)))))
     (error nil)))
 
 (defun hey-cli--sentinel (request process _event)

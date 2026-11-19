@@ -15,6 +15,10 @@ The package requires Emacs 28.2 or newer, `markdown-mode` 2.8 or newer, and
 HEY CLI 1.4.3 or newer. Install the CLI and sign in using the
 [official instructions](https://help.hey.com/article/1189-using-ai-agents-with-hey).
 Authentication belongs to the CLI; there are no tokens to configure in Emacs.
+The CLI manages credentials, installation IDs, and its HTTP cache. It can
+refresh credentials and update the cache during reads. Recent CLI versions
+can also clear both when HEY rejects a refresh token. After an upgrade, the
+CLI can refresh HEY agent skills it installed.
 
 On Emacs 29 or newer, evaluate:
 

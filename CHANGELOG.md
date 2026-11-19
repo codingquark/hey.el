@@ -35,6 +35,8 @@
 - Show the address used to send a message when the CLI supplies it. Label
   internal notes and share notices and exclude them from message counts and
   the thread's sender list.
+- Preserve sign-in recovery guidance when the CLI cannot clear its HTTP
+  cache after a refused refresh token.
 - Explain how to recover when the HEY CLI cannot set an attachment's macOS
   quarantine attribute.
 - Echo link destinations on entry without logging them to `*Messages*`.
