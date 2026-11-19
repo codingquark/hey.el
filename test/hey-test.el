@@ -1324,6 +1324,50 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
         (should (= (point) (car starts))))
       (kill-buffer (current-buffer)))))
 
+(ert-deftest hey-ui-thread-identifies-senders-and-internal-entries ()
+  (with-temp-buffer
+    (hey-thread-mode)
+    (setq hey--thread
+          (plist-get
+           (hey-model-normalize-thread
+            '(("ok" . t)
+              ("data"
+               (("id" . 801) ("kind" . "message")
+                ("creator" ("name" . "Primary"))
+                ("alternative_sender_name" . "Old sender name")
+                ("sender" ("name" . "Billing")
+                          ("email_address" . "\e[31mbilling@example.invalid\e[0m"))
+                ("body" . "Mail from Billing."))
+               (("id" . 802) ("kind" . "comment")
+                ("creator" ("name" . "Note Author"))
+                ("body" . "Internal body."))
+               (("id" . 803) ("kind" . "access_notice")
+                ("creator" ("name" . "Share Author"))
+                ("body" . "Sharing body."))
+               (("id" . 804)
+                ("creator" ("name" . "Legacy"))
+                ("sender" ("name" . "Missing address"))
+                ("body" . "Old CLI body."))
+               (("id" . 805) ("kind" . "message")
+                ("sender" ("email_address" . "alternate@example.invalid")))))
+            '(:subject "Synthetic subject" :source-title "Imbox"))
+           :value))
+    (hey--render-thread)
+    (should (equal (hey-thread-senders hey--thread)
+                   '("Billing <billing@example.invalid>" "Legacy"
+                     "alternate@example.invalid")))
+    (should (string-match-p "Messages shown: 3" (buffer-string)))
+    (should (string-match-p "3 shown" (hey--thread-header)))
+    (should (= (length (hey--entry-starts)) 5))
+    (dolist (expected '("## Billing \\<billing@example\\.invalid\\> —"
+                        "## Internal note by Note Author —"
+                        "## Share notice by Share Author —"
+                        "## Legacy —"
+                        "## alternate@example\\.invalid —"
+                        "Internal body."
+                        "Sharing body."))
+      (should (string-match-p (regexp-quote expected) (buffer-string))))))
+
 (ert-deftest hey-ui-entry-navigation-respects-boundaries-and-narrowing ()
   "Find adjacent entries without matching body headings or leaving the view."
   (with-temp-buffer

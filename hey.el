@@ -1785,7 +1785,7 @@ FACE defaults to `hey-status-face'."
                       (hey--header-element "Stale" 'hey-header-warning-face))))
            (count (hey--header-element
                    (format "%d shown"
-                           (length (hey-thread-entries hey--thread)))
+                           (hey-model-thread-message-count hey--thread))
                    'hey-header-count-face)))
       (hey--header-join
        (cond

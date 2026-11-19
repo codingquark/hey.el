@@ -84,8 +84,10 @@ sources such as search which do not."
   labels collections app-url matches original-index)
 
 (cl-defstruct hey-entry
-  "One normalized entry in a HEY thread."
-  id sender timestamp body summary body-state app-url)
+  "One normalized entry in a HEY thread.
+KIND is 'comment or 'access-notice for internal entries and 'message
+for mail, including entries from a CLI that omits the kind."
+  id (kind 'message) sender timestamp body summary body-state app-url)
 
 (cl-defstruct hey-thread
   "A normalized HEY thread assembled from entries and origin context."
@@ -706,6 +708,18 @@ and `:warnings'.  Preserve SOURCE."
     ("not_requested" 'not-requested)
     (_ 'unknown)))
 
+(defun hey-model--entry-sender (raw)
+  "Return the send-as identity or the existing author display from RAW."
+  (let* ((sender (hey-model--get "sender" raw))
+         (email (hey-model--clean-string
+                 (hey-model--get "email_address" sender))))
+    (if (string-empty-p email)
+        (hey-model--contact-display raw)
+      (let ((name (hey-model--clean-string (hey-model--get "name" sender))))
+        (if (string-empty-p name)
+            email
+          (format "%s <%s>" name email))))))
+
 (defun hey-model--normalize-entry (raw)
   "Normalize one RAW thread entry, or return nil without an exact ID."
   (let ((id (hey-model--id-string (hey-model--get "id" raw))))
@@ -713,12 +727,20 @@ and `:warnings'.  Preserve SOURCE."
       (let ((body (hey-model--get "body" raw)))
         (make-hey-entry
          :id id
-         :sender (hey-model--contact-display raw)
+         :kind (pcase (hey-model--get "kind" raw)
+                 ("comment" 'comment)
+                 ("access_notice" 'access-notice)
+                 (_ 'message))
+         :sender (hey-model--entry-sender raw)
          :timestamp (hey-model--clean-string (hey-model--get "created_at" raw))
          :body (if (stringp body) body "")
          :summary (hey-model--clean-string (hey-model--get "summary" raw))
          :body-state (hey-model--body-state (hey-model--get "body_state" raw))
          :app-url (hey-model-validate-app-url (hey-model--get "app_url" raw)))))))
+
+(defun hey-model--message-entry-p (entry)
+  "Return non-nil when ENTRY is a message."
+  (eq (hey-entry-kind entry) 'message))
 
 (defun hey-model--sanitize-membership-records (memberships)
   "Copy and sanitize normalized MEMBERSHIPS supplied through thread context."
@@ -754,10 +776,11 @@ Return `:value' as one `hey-thread' and non-fatal `:warnings'."
     (setq entries (nreverse entries))
     (let ((sender-set (make-hash-table :test #'equal)) senders app-url)
       (dolist (entry entries)
-        (let ((sender (hey-entry-sender entry)))
-          (unless (or (string-empty-p sender) (gethash sender sender-set))
-            (puthash sender t sender-set)
-            (push sender senders)))
+        (when (hey-model--message-entry-p entry)
+          (let ((sender (hey-entry-sender entry)))
+            (unless (or (string-empty-p sender) (gethash sender sender-set))
+              (puthash sender t sender-set)
+              (push sender senders))))
         (unless app-url (setq app-url (hey-entry-app-url entry))))
       (list
        :value
@@ -957,7 +980,7 @@ Memberships retain their complete values in `help-echo'."
 (defun hey-model--markdown-escape (value)
   "Escape sanitized metadata VALUE for literal Markdown text."
   (replace-regexp-in-string
-   "[][\\\\`*{}_()#+.!|>-]" "\\\\\\&"
+   "[][\\\\`*{}_()#+.!|<>-]" "\\\\\\&"
    (hey-model--clean-string value) t nil))
 
 (defun hey-model--thread-field (label value)
@@ -980,15 +1003,19 @@ Memberships retain their complete values in `help-echo'."
   (let ((names (hey-model--membership-names memberships)))
     (if names (string-join names ", ") "none")))
 
+(defun hey-model-thread-message-count (thread)
+  "Count messages in THREAD."
+  (cl-count-if #'hey-model--message-entry-p (hey-thread-entries thread)))
+
 (defun hey-model-thread-preamble (thread)
   "Return sanitized, Markdown-escaped metadata and its separator for THREAD."
-  (let ((parts nil)
-        (entries (hey-thread-entries thread)))
+  (let (parts)
     (push (hey-model--thread-field "Subject" (hey-thread-subject thread)) parts)
     (push (hey-model--thread-field
            "Senders" (string-join (hey-thread-senders thread) ", ")) parts)
     (push (hey-model--thread-field
-           "Messages shown" (number-to-string (length entries))) parts)
+           "Messages shown"
+           (number-to-string (hey-model-thread-message-count thread))) parts)
     (push (hey-model--thread-field "Account" (hey-thread-account-name thread)) parts)
     (push (hey-model--thread-field "Opened from" (hey-thread-source-title thread)) parts)
     (when (hey-thread-labels-known-p thread)
@@ -1006,6 +1033,17 @@ Memberships retain their complete values in `help-echo'."
     (push "\n---\n" parts)
     (apply #'concat (nreverse parts))))
 
+(defun hey-model--entry-heading (entry)
+  "Return the author or labeled internal heading for ENTRY."
+  (let ((author (or (hey-entry-sender entry) ""))
+        (label (pcase (hey-entry-kind entry)
+                 ('comment "Internal note")
+                 ('access-notice "Share notice"))))
+    (cond
+     ((null label) author)
+     ((string-empty-p author) label)
+     (t (concat label " by " author)))))
+
 (defun hey-model-thread-markdown (thread)
   "Return the package-owned Markdown scaffold for normalized THREAD.
 
@@ -1018,7 +1056,7 @@ define UI entry boundaries."
       (let* ((entry-id (hey-entry-id entry))
              (header (format "\n## %s — %s\n\n"
                              (hey-model--markdown-escape
-                              (hey-entry-sender entry))
+                              (hey-model--entry-heading entry))
                              (hey-model--markdown-escape
                               (hey-entry-timestamp entry))))
              (body (hey-entry-body entry))

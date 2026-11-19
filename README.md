@@ -88,9 +88,9 @@ The update preserves your position within the same message when it still exists.
 If the request fails, the header shows `Stale` and the thread keeps its cached
 contents with recovery guidance. The cache stays in memory.
 
-In a thread, `n` and `p` move between messages, `SPC` and `DEL` scroll,
-`r` marks the thread read, and `A` lists its attachments. The following keys
-act on body links:
+In a thread, `n` and `p` move between entries, `SPC` and `DEL` scroll,
+`r` marks the thread read, and `A` lists its attachments. Internal notes and
+share notices have their own headings. The following keys act on body links:
 
 | Key | Command | Action |
 | --- | --- | --- |
