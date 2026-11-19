@@ -2,15 +2,19 @@
 
 ## Unreleased
 
+- Reuse a pending thread read when reopening the same posting. Let Emacs
+  style the visible Markdown on redisplay so short threads open faster.
 - Show at least ten entries when opening or refreshing The Feed, when
   available. Display each page as it arrives and keep point on the current row.
 - Keep rendered messages in place when a thread refresh returns the same
-  content. Append new replies or replace the final message without rebuilding
-  the earlier entries.
+  content, including after a failed read or a change in list context.
+  Append new replies or replace the final message without rebuilding the
+  earlier entries.
 - Index postings as pages arrive. Return directly to the original row when
   the list's point is still on it. Skip hidden columns and header times in
   narrow lists.
 - Find links within the current message when moving through long threads.
+  Skip Markdown's full link lookup when point is on ordinary prose.
   Reference links still use definitions from the accessible thread.
 - Reuse the thread's message count when redrawing its header and share local
   date information when formatting rows with different timestamps.

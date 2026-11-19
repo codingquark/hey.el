@@ -726,6 +726,14 @@ CATEGORY and EXIT-STATUS are used only for redacted diagnostics."
         (setf (hey-cli--request-timed-out request) t)
         (delete-process process)))))
 
+(defun hey-cli-request-pending-p (request)
+  "Return non-nil while REQUEST awaits its callback and can still be shared."
+  (and (hey-cli--request-p request)
+       (not (or (hey-cli--request-completed request)
+                (hey-cli--request-canceled request)
+                (hey-cli--request-timed-out request)
+                (hey-cli--request-output-too-large request)))))
+
 (defun hey-cli-cancel-request (request)
   "Cancel an asynchronous HEY REQUEST.
 

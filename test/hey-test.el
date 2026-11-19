@@ -1861,6 +1861,31 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
         (should (= (point-min) start))
         (should (= (point-max) end))))))
 
+(ert-deftest hey-thread-link-tracking-skips-prose-and-keeps-fontified-references ()
+  "Skip Markdown's entry scan on prose and retain its fontified link targets."
+  (hey-test-with-fake nil
+    (hey-test-with-thread-body
+        (concat "[r]: https://example.invalid/one\n[s]: https://example.invalid/two"
+                "\n\n[one][r][two][s]\nVisit https://example.invalid/current later.")
+      (rename-buffer "HEY synthetic link tracking" t)
+      (let ((noninteractive nil)) (font-lock-mode 1))
+      (font-lock-ensure)
+      (let ((lookup (symbol-function 'markdown-link-at-pos)) (calls 0))
+        (cl-letf (((symbol-function 'markdown-link-at-pos)
+                   (lambda (position) (cl-incf calls) (funcall lookup position))))
+          (hey-test--point-at-link "later")
+          (should-not (hey--link-at-point))
+          (should (zerop calls))
+          (hey-test--point-at-link "current")
+          (should (equal (hey--link-at-point) "https://example.invalid/current"))
+          (goto-char (point-min))
+          (search-forward "[two")
+          (backward-char 1)
+          (let* ((ref (nth 4 (funcall lookup (point))))
+                 (url (car (markdown-reference-definition ref))))
+            (should url)
+            (should (equal (hey--link-at-point) url))))))))
+
 (ert-deftest hey-ui-thread-echo-reports-a-new-link-only ()
   "Show a destination once, stay silent otherwise, and refresh on re-entry."
   (hey-test-with-thread-body
@@ -1953,7 +1978,8 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
                        :value)))
     (hey--render-thread)
     (goto-char (point-min))
-    (should (memq 'hey-metadata-label-face (get-text-property (point) 'face)))
+    (should (memq 'hey-metadata-label-face
+                  (ensure-list (get-text-property (point) 'face))))
     (dolist (text '("Subject: body text" "Labels: ordinary prose"))
       (search-forward text)
       (let ((face (get-text-property (- (point) (length text)) 'face)))

@@ -91,6 +91,8 @@ three unread out of twenty displayed. Search results have unknown read state
 and show `?/20`; an empty list shows `0/0`. Outside search, mail counts as
 seen when the CLI reports it as seen or accepts an explicit mark-read request.
 
+If you reopen a thread while its CLI read is still running from the same
+list context, Emacs shows the thread buffer and lets that read finish.
 Reopening a loaded thread keeps its contents visible while fetching an update.
 The update preserves your position within the same message when it still exists.
 If the request fails, the header shows `Stale` and the thread keeps its cached
@@ -208,9 +210,9 @@ Run `make benchmark` to measure normalization, list and thread rendering,
 header updates, message navigation, attachment lists, and transport helpers.
 List workloads cover cold and warm rendering, refresh status, page appends,
 browsing 100 consecutive pages, and rendering labeled rows in a narrow
-window. Thread workloads cover the first screen of a long
-conversation, cursor movement over prose, and reopening a conversation
-before and after a reply arrives.
+window. Thread workloads cover the first 40 lines of single messages around
+3, 10, and 32 KiB, the first screen of a long conversation, cursor movement
+over prose, and reopening a conversation before and after a reply arrives.
 It uses compiled package code and synthetic data, starts no subprocesses, and
 reports the median of five samples with garbage collection included. Timings
 are diagnostic, with no pass/fail threshold, and exclude CLI and network latency.

@@ -98,6 +98,35 @@ Run PREPARE before each sample, outside its timed region, when non-nil."
              ;; Independent JSON objects reflect the next real response.
              (setq response (hey-cli--parse-json (cadr sample))))))))))
 
+(defun hey-benchmark--cold-thread (name thread)
+  "Measure a fresh render of THREAD and fontification of its first 40 lines."
+  (hey-benchmark--measure
+   name
+   (lambda ()
+     (with-temp-buffer
+       ;; Temporary buffers and batch mode normally disable font locking.
+       (rename-buffer "HEY benchmark thread" t)
+       (hey-thread-mode)
+       (let ((noninteractive nil)) (font-lock-mode 1))
+       (unless font-lock-mode
+         (error "Thread benchmark requires active font locking"))
+       (setq hey--thread thread)
+       (hey--render-thread)
+       (font-lock-ensure (point-min) (save-excursion (forward-line 40) (point)))))))
+
+(defun hey-benchmark--track-prose (name)
+  "Measure five cursor moves over prose near the end of the thread under NAME."
+  (goto-char (point-max))
+  (search-backward "Friday")
+  (let ((start (point)))
+    (hey-benchmark--measure
+     name
+     (lambda ()
+       (goto-char start)
+       (dotimes (_ 5)
+         (forward-char 1)
+         (hey--track-body-link))))))
+
 (defun hey-benchmark--run ()
   "Measure normalization, rendering, navigation, and transport helpers."
   (let* ((source (make-hey-source :key '(box "101" "imbox") :kind 'box
@@ -285,16 +314,7 @@ Run PREPARE before each sample, outside its timed region, when non-nil."
                                 :id (number-to-string id)
                                 :body "Read [the notes](https://example.invalid/notes) before Friday."))))
       (hey--render-thread)
-      (goto-char (point-max))
-      (search-backward "Friday")
-      (let ((start (point)))
-        (hey-benchmark--measure
-         "Track cursor on prose x5 / message 1000"
-         (lambda ()
-           (goto-char start)
-           (dotimes (_ 5)
-             (forward-char 1)
-             (hey--track-body-link))))))
+      (hey-benchmark--track-prose "Track cursor on prose x5 / message 1000"))
     (let* ((paragraph
             (concat "The **synthetic project** is ready for its next review. "
                     "Read the design notes and the follow-up questions, "
@@ -307,23 +327,27 @@ Run PREPARE before each sample, outside its timed region, when non-nil."
                         (setf (hey-entry-body copy) body)
                         copy))
                     entries))
-      (hey-benchmark--measure
+      (hey-benchmark--cold-thread
        (format "Cold thread 1000 x %d B + first 40 lines" (string-bytes body))
-       (lambda ()
-         (with-temp-buffer
-           ;; Temporary buffers and batch mode normally disable font locking.
-           (rename-buffer "HEY benchmark thread" t)
-           (hey-thread-mode)
-           (let ((noninteractive nil)) (font-lock-mode 1))
-           (unless font-lock-mode
-             (error "Thread benchmark requires active font locking"))
-           (setq hey--thread large-thread)
-           (hey--render-thread)
-           (font-lock-ensure (point-min)
-                             (save-excursion
-                               (goto-char (point-min))
-                               (forward-line 40)
-                               (point))))))))
+       large-thread)
+      (dolist (kib '(3 10 32))
+        (let* ((section (concat paragraph "\n- Read [the notes](/topics/1).\n\n"
+                                "> I can review this on Friday.\n\n"))
+               (repetitions (ceiling (* kib 1024) (length section)))
+               (entry (copy-hey-entry (car entries)))
+               (short-thread (copy-hey-thread thread)))
+          (setf (hey-entry-body entry) (apply #'concat (make-list repetitions section))
+                (hey-thread-entries short-thread) (list entry))
+          (hey-benchmark--cold-thread
+           (format "Cold 1 message / %.1f KiB + first 40 lines"
+                   (/ (string-bytes (hey-entry-body entry)) 1024.0))
+           short-thread)
+          (when (= kib 10)
+            (with-temp-buffer
+              (hey-thread-mode)
+              (setq hey--thread short-thread)
+              (hey--render-thread)
+              (hey-benchmark--track-prose "Track cursor on prose x5 / one 10 KiB body")))))))
   (let ((chunk (make-string 1024 ?x))
         (hey-max-output-bytes (* 4 1024 1024)))
     (hey-benchmark--measure

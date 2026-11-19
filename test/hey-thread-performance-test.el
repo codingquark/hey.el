@@ -58,6 +58,50 @@
     (hey--open-thread (car hey--records) 'same-window)
     (get-buffer (hey--thread-buffer-name "101" "987654321"))))
 
+(ert-deftest hey-thread-reopen-shares-a-pending-read ()
+  "Share an active CLI read, preserve its context, and retry after cancellation."
+  (hey-thread-performance--with-session
+    (with-current-buffer source-buffer (setq hey--operation-overrides nil))
+    (setenv "HEY_EMACS_TEST_SCENARIO" "delay")
+    (let* ((thread (hey-thread-performance--open source-buffer))
+           (request (buffer-local-value 'hey--request thread))
+           (context (buffer-local-value 'hey--thread-origin-context thread))
+           (window (split-window)))
+      (select-window window)
+      (hey-thread-performance--open source-buffer)
+      (with-current-buffer thread
+        (should (eq window (plist-get hey--origin :window)))
+        ;; Read acknowledgements update the context captured by this request.
+        (should (eq context hey--thread-origin-context))
+        (should (eq request hey--request))
+        (should (hey-cli-request-pending-p request))
+        (hey-cli-cancel-request request)
+        (should-not (hey-cli-request-pending-p request)))
+      (setenv "HEY_EMACS_TEST_SCENARIO" "success")
+      (hey-thread-performance--open source-buffer)
+      (hey-test-await (lambda () (buffer-local-value 'hey--thread thread)))
+      (with-current-buffer thread (should (= hey--generation 2))))))
+
+(ert-deftest hey-thread-reopen-retries-after-an-aborted-read ()
+  "Allow retries when dispatch quits or the completed response fails to normalize."
+  (hey-thread-performance--with-session
+    (with-current-buffer source-buffer (setq hey--operation-overrides nil))
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest _) (throw 'setup-quit 'interrupted))))
+      (should (eq 'interrupted
+                  (catch 'setup-quit (hey-thread-performance--open source-buffer)))))
+    (let ((thread (get-buffer thread-name)))
+      (should-not (buffer-local-value 'hey--request thread))
+      (cl-letf (((symbol-function 'hey-model-normalize-thread)
+                 (lambda (&rest _) (error "Synthetic normalization failure"))))
+        (hey-thread-performance--open source-buffer)
+        (let ((request (buffer-local-value 'hey--request thread)))
+          (should request)
+          (hey-test-await (lambda () (not (hey-cli-request-pending-p request))))))
+      (hey-thread-performance--open source-buffer)
+      (hey-test-await (lambda () (buffer-local-value 'hey--thread thread)))
+      (with-current-buffer thread (should (= hey--generation 3))))))
+
 (ert-deftest hey-thread-cached-refresh-preserves-current-entry-and-window ()
   "Retain the snapshot and the position reached while its refresh is pending."
   (hey-thread-performance--with-session
@@ -135,6 +179,33 @@
           (should (= (point) body-marker))
           (should (= old-offset (cadr (hey--thread-position (point)))))
           (set-marker body-marker nil))))))
+
+(ert-deftest hey-thread-presentation-edits-preserve-intact-bodies ()
+  "Reuse intact bodies after metadata and footer edits, and repair changed ones."
+  (hey-thread-performance--with-session
+    (let ((thread (hey-thread-performance--open source-buffer)))
+      (funcall (caar callbacks) (hey-thread-performance--envelope))
+      (with-current-buffer thread
+        (search-forward "target")
+        (let ((anchor (hey--thread-position (point)))
+              (marker (copy-marker (point))))
+          (dolist (changed '(nil t))
+            (when changed
+              (let ((inhibit-read-only t))
+                (save-excursion (insert "External edit"))))
+            (with-current-buffer source-buffer
+              (setf (hey-posting-subject (car hey--records))
+                    (if changed "Another subject" "Changed subject")))
+            (hey-thread-performance--open source-buffer)
+            (funcall (cdar callbacks) (make-hey-error :message "Offline"))
+            (should (string-match-p "Refresh failed: Offline" (buffer-string)))
+            (hey-thread-performance--open source-buffer)
+            (funcall (caar callbacks) (hey-thread-performance--envelope))
+            (should (equal (cl-subseq anchor 0 2)
+                           (cl-subseq (hey--thread-position (point)) 0 2)))
+            (unless changed (should (= marker (point))))
+            (should-not (string-match-p "External edit\\|Offline" (buffer-string))))
+          (set-marker marker nil))))))
 
 (ert-deftest hey-thread-cached-refresh-errors-keep-readable-data-and-retry ()
   "Keep cached bodies on failure, show guidance, and reject obsolete callbacks."
@@ -241,7 +312,8 @@
              (hey-model-normalize-thread
               `(("data" (("id" . 801) ("creator" ("name" . "Alice"))
                          ("body_state" . "hydrated")
-                         ("body" . ,(concat (apply #'concat (make-list 500 "Body paragraph.\n\n"))
+                         ("body" . ,(concat "**First bold**\n\n"
+                                            (apply #'concat (make-list 500 "Body paragraph.\n\n"))
                                             "Subject: Forged body metadata\n\n**Far bold**\n"
                                             "[Far link](https://example.invalid/path%20name)\n"
                                             "[Local link](file:///tmp/private)\n")))))
@@ -249,6 +321,12 @@
                             :subject "Package subject" :source-title "Imbox"))
              :value))
       (hey--render-thread)
+      (search-forward "First bold")
+      (let ((start (match-beginning 0)))
+        (should-not (get-text-property start 'fontified))
+        (font-lock-ensure (line-beginning-position) (line-end-position))
+        (should (memq 'markdown-bold-face
+                      (ensure-list (get-text-property start 'face)))))
       (goto-char (point-max))
       (search-backward "Far bold")
       (should-not (get-text-property (point) 'fontified))

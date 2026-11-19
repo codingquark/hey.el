@@ -1386,6 +1386,49 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
       (user-error "This HEY row has no readable thread identifier"))
     (hey--open-thread posting intent)))
 
+(defun hey--fetch-thread (thread-key context reuse)
+  "Read THREAD-KEY into the current buffer using its list CONTEXT.
+When REUSE is non-nil, keep the rendered thread visible during the read."
+  (let ((buffer (current-buffer))
+        (generation hey--generation)
+        (source-key (cons 'thread thread-key)))
+    (setq hey--request
+          (hey--call
+           'hey-cli-thread-read (car thread-key) (cadr thread-key)
+           buffer source-key generation
+           (lambda (envelope)
+             (when (and (buffer-live-p buffer)
+                        (= generation
+                           (buffer-local-value 'hey--generation buffer))
+                        (equal thread-key
+                               (buffer-local-value 'hey--thread-key buffer)))
+               (with-current-buffer buffer
+                 (let* ((result (hey-model-normalize-thread envelope context))
+                        (previous (and reuse hey--thread))
+                        (warnings hey--warnings))
+                   (setq hey--thread (plist-get result :value)
+                         hey--warnings (plist-get result :warnings)
+                         hey--loading nil hey--stale nil
+                         hey--error nil hey--request nil)
+                   (hey--update-thread previous warnings)))))
+           (lambda (error)
+             (when (and (buffer-live-p buffer)
+                        (= generation
+                           (buffer-local-value 'hey--generation buffer))
+                        (equal thread-key
+                               (buffer-local-value 'hey--thread-key buffer)))
+               (with-current-buffer buffer
+                 (setq hey--loading nil hey--error error hey--request nil
+                       hey--stale (and reuse t))
+                 (if reuse
+                     (hey--render-thread-status)
+                   (hey--render-thread-state
+                    (format "HEY could not load this thread: %s\n\n%s"
+                            (hey-error-message error)
+                            (hey--error-guidance
+                             error "Return to the list and reopen the thread to retry."))
+                    'hey-error-face)))))))))
+
 (defun hey--open-thread (posting intent)
   "Fetch and display the thread represented by POSTING using INTENT."
   (let* ((origin (hey--origin-for posting))
@@ -1399,66 +1442,34 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
     (with-current-buffer buffer
       (unless (derived-mode-p 'hey-thread-mode)
         (hey-thread-mode))
-      (let ((reuse (and (hey-thread-p hey--thread)
-                        (equal hey--thread-key thread-key)
-                        (integerp hey--thread-preamble-end)
-                        (markerp hey--thread-footer-start)
-                        (equal (hey-thread-account-id hey--thread) account-id)
-                        (equal (hey-thread-topic-id hey--thread) topic-id)
-                        (eq hey--operation-overrides backend))))
-        (hey--next-generation)
-        (when (and reuse (not (equal context hey--thread-origin-context)))
-          (save-restriction (widen) (hey--update-thread-context context)))
-        (setq hey--origin origin
-              hey--thread (and reuse hey--thread)
-              hey--thread-origin-context context
-              hey--thread-key thread-key
-              hey--loading t
-              hey--stale nil
-              hey--error nil
-              hey--operation-overrides backend)
-        (if reuse
-            (hey--render-thread-status)
-          (setq hey--warnings nil)
-          (hey--render-thread-state "Loading HEY thread…"))
-        (let ((generation hey--generation)
-              (source-key (cons 'thread thread-key)))
-          (setq hey--request
-                (hey--call
-                 'hey-cli-thread-read account-id topic-id
-                 buffer source-key generation
-                 (lambda (envelope)
-                   (when (and (buffer-live-p buffer)
-                              (= generation
-                                 (buffer-local-value 'hey--generation buffer))
-                              (equal thread-key
-                                     (buffer-local-value 'hey--thread-key buffer)))
-                     (with-current-buffer buffer
-                       (let* ((result (hey-model-normalize-thread envelope context))
-                              (previous (and reuse hey--thread))
-                              (warnings hey--warnings))
-                         (setq hey--thread (plist-get result :value)
-                               hey--warnings (plist-get result :warnings)
-                               hey--loading nil hey--stale nil
-                               hey--error nil hey--request nil)
-                         (hey--update-thread previous warnings)))))
-                 (lambda (error)
-                   (when (and (buffer-live-p buffer)
-                              (= generation
-                                 (buffer-local-value 'hey--generation buffer))
-                              (equal thread-key
-                                     (buffer-local-value 'hey--thread-key buffer)))
-                     (with-current-buffer buffer
-                       (setq hey--loading nil hey--error error hey--request nil
-                             hey--stale (and reuse t))
-                       (if reuse
-                           (hey--render-thread-status)
-                         (hey--render-thread-state
-                          (format "HEY could not load this thread: %s\n\n%s"
-                                  (hey-error-message error)
-                                  (hey--error-guidance
-                                   error "Return to the list and reopen the thread to retry."))
-                          'hey-error-face))))))))))
+      (setq hey--origin origin)
+      (unless (and hey--loading
+                   (hey-cli-request-pending-p hey--request)
+                   (equal hey--thread-key thread-key)
+                   (eq hey--operation-overrides backend)
+                   (equal hey--thread-origin-context context))
+        (let ((reuse (and (hey-thread-p hey--thread)
+                          (equal hey--thread-key thread-key)
+                          (integerp hey--thread-preamble-end)
+                          (markerp hey--thread-footer-start)
+                          (equal (hey-thread-account-id hey--thread) account-id)
+                          (equal (hey-thread-topic-id hey--thread) topic-id)
+                          (eq hey--operation-overrides backend))))
+          (hey--next-generation)
+          (when (and reuse (not (equal context hey--thread-origin-context)))
+            (save-restriction (widen) (hey--update-thread-context context)))
+          (setq hey--thread (and reuse hey--thread)
+                hey--thread-origin-context context
+                hey--thread-key thread-key
+                hey--loading t
+                hey--stale nil
+                hey--error nil
+                hey--operation-overrides backend)
+          (if reuse
+              (hey--render-thread-status)
+            (setq hey--warnings nil)
+            (hey--render-thread-state "Loading HEY thread…"))
+          (hey--fetch-thread thread-key context reuse))))
     (hey-display-buffer buffer intent)))
 
 (defun hey-open ()
@@ -1929,14 +1940,6 @@ so restoration cannot redirect an origin that changed during rendering."
                              hey--thread-preamble-end t)
       (hey--thread-face (match-beginning 1) (match-end 1) 'hey-thread-subject-face))))
 
-(defun hey--fontify-thread-view ()
-  "Fontify bounded context near point and each visible window start."
-  (dolist (position (cons (point)
-                          (mapcar #'window-start
-                                  (get-buffer-window-list (current-buffer) nil t))))
-    (font-lock-ensure (max (point-min) (- position 2048))
-                      (min (point-max) (+ position 6144)))))
-
 (defun hey--replace-thread-preamble ()
   "Replace the package-owned preamble using the current thread."
   (let ((empty (and (= hey--thread-footer-start hey--thread-preamble-end)
@@ -1955,7 +1958,8 @@ so restoration cannot redirect an origin that changed during rendering."
 
 (defun hey--update-thread-context (context)
   "Update cached thread metadata from CONTEXT without replacing entry bodies."
-  (let ((view (hey--thread-view-state)))
+  (let ((intact (eql hey--thread-rendered-tick (buffer-chars-modified-tick)))
+        (view (hey--thread-view-state)))
     (setq hey--thread (copy-hey-thread hey--thread))
     (setf (hey-thread-account-name hey--thread) (plist-get context :account-name)
           (hey-thread-posting-id hey--thread) (plist-get context :posting-id)
@@ -1969,11 +1973,12 @@ so restoration cannot redirect an origin that changed during rendering."
           (plist-get context :collections-known-p))
     (hey--replace-thread-preamble)
     (hey--restore-thread-view view)
-    (hey--fontify-thread-view)))
+    (when intact (setq hey--thread-rendered-tick (buffer-chars-modified-tick)))))
 
 (defun hey--render-thread-status ()
   "Update the cached thread's refresh notice without replacing its body."
-  (let ((inhibit-read-only t))
+  (let ((intact (eql hey--thread-rendered-tick (buffer-chars-modified-tick)))
+        (inhibit-read-only t))
     (save-excursion
       (save-restriction
         (widen)
@@ -1989,6 +1994,7 @@ so restoration cannot redirect an origin that changed during rendering."
                        hey--error "Return to the list and reopen the thread to retry.")
                       "\n")
               (hey--thread-face start (point) 'hey-error-face))))))
+    (when intact (setq hey--thread-rendered-tick (buffer-chars-modified-tick)))
     (force-mode-line-update)))
 
 (defun hey--render-thread (&optional preserve-point)
@@ -2008,8 +2014,6 @@ so restoration cannot redirect an origin that changed during rendering."
     (setq hey--thread-footer-start (copy-marker (point-max)))
     (hey--fontify-thread-preamble)
     (if view (hey--restore-thread-view view) (goto-char (point-min)))
-    ;; Redisplay fontifies remaining body text as it enters a visible window.
-    (hey--fontify-thread-view)
     (hey--render-thread-status)
     (setq hey--thread-rendered-tick (buffer-chars-modified-tick))))
 
@@ -2047,7 +2051,6 @@ WARNINGS are the warnings rendered with PREVIOUS."
           (hey--replace-thread-preamble)
           (setq hey--thread-count-text nil)
           (hey--restore-thread-view view)
-          (hey--fontify-thread-view)
           (hey--render-thread-status)
           (setq hey--thread-rendered-tick (buffer-chars-modified-tick))))))))
 
@@ -2153,10 +2156,20 @@ Preserve match data and the destination's percent escapes."
                  (hey--markdown-uri-at-point))))
           (if raw
               (setq destination (string-replace "&amp;" "&" raw))
-            (pcase-let ((`(,_ ,_ ,label ,url ,ref . ,_)
-                         (markdown-link-at-pos (point))))
-              (setq destination url
-                    reference (if (equal ref "") label ref))))))
+            ;; Markdown moves to the opening bracket in fontified labels.
+            ;; Otherwise only a multiline reference or a current-line URI
+            ;; can still match.  Skip its full-entry scan over ordinary prose.
+            (when (or (eq (get-text-property (point) 'face) 'markdown-link-face)
+                      (thing-at-point-looking-at markdown-regex-link-reference)
+                      (save-restriction
+                        (narrow-to-region (line-beginning-position)
+                                          (line-end-position))
+                        (or (thing-at-point-looking-at markdown-regex-angle-uri)
+                            (thing-at-point-looking-at markdown-regex-uri))))
+              (pcase-let ((`(,_ ,_ ,label ,url ,ref . ,_)
+                           (markdown-link-at-pos (point))))
+                (setq destination url
+                      reference (if (equal ref "") label ref)))))))
       ;; Keep the first reference definition in the caller's accessible thread.
       (hey-model-resolve-body-url
        (or destination
