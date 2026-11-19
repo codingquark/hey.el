@@ -1604,7 +1604,37 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
      "https://example.invalid/papa%20name.pdf")
     ("Read [quebec](/topics/901\n \"Note\") now."
      "quebec"
-     "https://app.hey.com/topics/901"))
+     "https://app.hey.com/topics/901")
+    ("Read [romeo](https://example.invalid/a%2Fb?x=1&amp;copy;=2&y=3)."
+     "romeo"
+     "https://example.invalid/a%2Fb?x=1&copy;=2&y=3")
+    ("Read [sierra](/topics/901?a=1&amp;amp;b=2&amp;#x41;=3)."
+     "sierra"
+     "https://app.hey.com/topics/901?a=1&amp;b=2&#x41;=3")
+    ("Read https://example.invalid/tango?a=1&amp;b=2 now."
+     "b=2"
+     "https://example.invalid/tango?a=1&b=2")
+    ("Read https://example.invalid/victor?a=1&amp;copy;=2 now."
+     "copy;=2"
+     "https://example.invalid/victor?a=1&copy;=2")
+    ("Read (https://example.invalid/a;b%2Fc?x=1&amp;utm\\_source=mail)."
+     "source"
+     "https://example.invalid/a;b%2Fc?x=1&utm_source=mail")
+    ("Read (https://example.invalid/route\\_(east)?x=1&amp;y=2)."
+     "east"
+     "https://example.invalid/route_(east)?x=1&y=2")
+    ("![Chart.jpg](https://example.invalid/chart%2Fq?a=1&amp;copy;=2) <https://example.invalid/chart%2Fq?a=1&amp;copy;=2>"
+     ") <https://example.invalid/chart"
+     "https://example.invalid/chart%2Fq?a=1&copy;=2")
+    ("Read <https://example.invalid/a,b?q=1&amp;copy;=2>."
+     "a,b"
+     "https://example.invalid/a,b?q=1&copy;=2")
+    ("Read <https://[2001:db8::1]/route?q=1&amp;copy;=2>."
+     "db8"
+     "https://[2001:db8::1]/route?q=1&copy;=2")
+    ("Read [https://example.invalid/whiskey?a=1&amp;copy;=2](https://example.invalid/whiskey?a=1&amp;copy;=2)."
+     "whiskey"
+     "https://example.invalid/whiskey?a=1&copy;=2"))
   "Body link forms: buffer text, a label to visit, and the destination.")
 
 (ert-deftest hey-ui-thread-link-keeps-the-written-destination ()
@@ -1612,15 +1642,19 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
   (dolist (case hey-test--link-forms)
     (pcase-let ((`(,markdown ,label ,destination) case))
       (hey-test-with-thread-body markdown
-        (let (copied echoed)
+        (let (copied echoed opened)
           (cl-letf (((symbol-function 'kill-new)
                      (lambda (url &rest _) (setq copied url)))
+                    ((symbol-function 'browse-url)
+                     (lambda (url &rest _) (setq opened url)))
                     ((symbol-function 'message)
                      (lambda (format-string &rest args)
                        (setq echoed (apply #'format format-string args)))))
             (hey-test--point-at-link label)
             (hey-copy-link)
             (should (equal copied destination))
+            (hey-follow-link)
+            (should (equal opened destination))
             (hey-show-link)
             (should (equal echoed (concat "Link: " destination)))))))))
 
@@ -1668,6 +1702,8 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
   "Preserve caller match data when resolving or rejecting a body link."
   (dolist (case (append hey-test--link-forms
                        '(("Read [local](file:///tmp/private)." "local" nil)
+                         ("Read <file:///tmp/https://example.invalid/q?a=1&amp;b=2>."
+                          "example.invalid" nil)
                          ("Read plain text." "plain" nil))))
     (pcase-let ((`(,markdown ,label ,destination) case))
       (hey-test-with-thread-body markdown

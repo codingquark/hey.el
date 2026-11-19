@@ -21,6 +21,7 @@
 (require 'button)
 (require 'cl-lib)
 (require 'hl-line)
+(require 'rx)
 (require 'subr-x)
 (require 'tabulated-list)
 (require 'thingatpt)
@@ -1998,15 +1999,58 @@ Scan balanced parentheses to include any nested destination parentheses."
       (match-string-no-properties 1 part))
      (t part))))
 
+(defconst hey--markdown-angle-uri-regexp
+  (rx "<" (group alpha (** 1 31 (any alnum "+.-")) ":"
+                (+ (not (any "<> \t\n\r")))) ">")
+  "Match a URI delimited by literal angle brackets.")
+
+(defconst hey--markdown-prose-escape-regexp
+  (rx "\\" (group (any "\\`*_~[]<>|")))
+  "Match punctuation escaped by the HEY CLI in Markdown prose.")
+
+(defconst hey--markdown-prose-uri-regexp
+  (rx (or line-start (any " \t(\"'"))
+      (group "http" (? "s") "://"
+             (+ (or (not (any "][<>\"`\\ \t\n\r"))
+                    (regexp hey--markdown-prose-escape-regexp)))))
+  "Match a bare web URI in HEY Markdown prose.")
+
+(defun hey--markdown-uri-at-point ()
+  "Return an angle-bracket or HEY-escaped bare URI at point."
+  (save-restriction
+    (narrow-to-region (line-beginning-position) (line-end-position))
+    (cond
+     ((thing-at-point-looking-at hey--markdown-angle-uri-regexp)
+      (match-string-no-properties 1))
+     ((and (thing-at-point-looking-at hey--markdown-prose-uri-regexp)
+           (>= (point) (match-beginning 1)))
+      (let ((url (match-string-no-properties 1))
+            (closing (pcase (char-before (match-beginning 1))
+                       (?\( ")")
+                       (?' "'"))))
+        (when (string-search "&amp;" url)
+          (when (and closing
+                     (string-match (concat (regexp-quote closing) "[.,!?;:]*\\'")
+                                   url))
+            (setq url (substring url 0 (match-beginning 0))))
+          (replace-regexp-in-string hey--markdown-prose-escape-regexp
+                                    "\\1" url t)))))))
+
 (defun hey--link-at-point ()
   "Return the validated body-link destination at point, or nil.
 Preserve match data and the destination's percent escapes."
   (save-match-data
-    (hey-model-resolve-body-url
-     ;; Markdown decodes spaces and controls only in inline destinations.
-     (if (thing-at-point-looking-at markdown-regex-link-inline)
-         (hey--inline-link-destination (match-beginning 5) (match-end 0))
-       (markdown-link-url)))))
+    (let ((raw
+           ;; markdown-mode decodes percent escapes in inline links and stops
+           ;; at semicolons in bare and angle-bracket URIs.
+           (if (thing-at-point-looking-at markdown-regex-link-inline)
+               (hey--inline-link-destination (match-beginning 5) (match-end 0))
+             (hey--markdown-uri-at-point))))
+      (hey-model-resolve-body-url
+       (if raw
+           ;; Undo one layer of the CLI's Markdown escaping.
+           (string-replace "&amp;" "&" raw)
+         (markdown-link-url))))))
 
 (defun hey--link-at-point-or-error ()
   "Return the destination of the activatable link at point, or fail."

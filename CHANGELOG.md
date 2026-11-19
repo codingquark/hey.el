@@ -31,6 +31,7 @@
   to the official HEY origin; non-web schemes stay inert. The `b` and `y`
   targets remain limited to the official application.
 - Preserve percent-encoded destinations and handle multiline link titles.
+- Restore ampersands escaped by the CLI in body link destinations.
 - Show the address used to send a message when the CLI supplies it. Label
   internal notes and share notices and exclude them from message counts and
   the thread's sender list.
