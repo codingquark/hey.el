@@ -31,6 +31,8 @@
   to the official HEY origin; non-web schemes stay inert. The `b` and `y`
   targets remain limited to the official application.
 - Preserve percent-encoded destinations and handle multiline link titles.
+- Explain how to recover when the HEY CLI cannot set an attachment's macOS
+  quarantine attribute.
 - Echo link destinations on entry without logging them to `*Messages*`.
   Truncate long previews with an ellipsis; copy and open complete destinations.
   Suppress competing Markdown Eldoc output only in HEY thread buffers.

@@ -45,7 +45,7 @@ case $scenario in
   attachment-list)
     cat "$fixture_dir/attachments.json"
     ;;
-  attachment-save|attachment-delay|attachment-failed|attachment-bad-result)
+  attachment-save|attachment-delay|attachment-failed|attachment-quarantine-failed|attachment-bad-result)
     attachment_id=
     output=
     while [ "$#" -gt 0 ]; do
@@ -65,6 +65,10 @@ case $scenario in
     if [ "$scenario" = attachment-delay ]; then sleep 2; fi
     if [ "$scenario" = attachment-failed ]; then
       cat "$fixture_dir/transport-error.json" >&2
+      exit 7
+    fi
+    if [ "$scenario" = attachment-quarantine-failed ]; then
+      printf '%s\n' '{"ok":false,"code":"api","error":"could not mark file as downloaded: operation not supported"}' >&2
       exit 7
     fi
     printf 'Synthetic attachment.\n' > "$output"

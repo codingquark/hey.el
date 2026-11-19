@@ -2370,6 +2370,22 @@ Use ENTRIES as a message ID table when non-nil."
       (let ((message-log-max nil))
         (message "%s" status)))))
 
+(defun hey--attachment-download-error (error)
+  "Describe an attachment download ERROR and how to recover."
+  (pcase (hey-error-category error)
+    ('canceled "Attachment download canceled.")
+    ('timeout "Attachment download timed out; retry saving.")
+    (_
+     (let ((fallback
+            ;; The CLI uses a generic API code without a hint for this error.
+            (if (and (equal (hey-error-code error) "api")
+                     (string-prefix-p "could not mark file as downloaded:"
+                                      (or (hey-error-message error) "")))
+                "Choose a destination that supports the macOS quarantine attribute."
+              "Retry saving.")))
+       (format "Attachment download failed. %s"
+               (hey--error-guidance error fallback))))))
+
 (defun hey--start-attachment-save (attachment destination)
   "Download ATTACHMENT to validated DESTINATION with private staging."
   (when hey--attachment-save-token
@@ -2427,12 +2443,7 @@ Use ENTRIES as a message ID table when non-nil."
                          "Attachment could not be verified or saved; choose another destination.")))))
                  (lambda (error)
                    (hey--attachment-save-state
-                    buffer token
-                    (pcase (hey-error-category error)
-                      ('canceled "Attachment download canceled.")
-                      ('timeout "Attachment download timed out; retry saving.")
-                      (_ (format "Attachment download failed. %s"
-                                 (hey--error-guidance error "Retry saving."))))))
+                    buffer token (hey--attachment-download-error error)))
                  finish))
           (setq handed-off t))
       (unless handed-off

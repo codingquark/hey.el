@@ -197,9 +197,10 @@
     (should-not (string-match-p "arg=--force" (hey-test-read-record)))))
 
 (ert-deftest hey-attachment-save-cancel-timeout-and-failure-clean-staging ()
-  (dolist (kind '(cancel timeout failure bad-result))
+  (dolist (kind '(cancel timeout failure quarantine-failure bad-result))
     (hey-attachment-test--with-save
         (pcase kind ('failure "attachment-failed") ('bad-result "attachment-bad-result")
+               ('quarantine-failure "attachment-quarantine-failed")
                (_ "attachment-delay"))
       (let ((hey-attachment-save-timeout-seconds (if (eq kind 'timeout) 0.2 5)))
         (let (messages)
@@ -219,6 +220,9 @@
                      ('cancel "Attachment download canceled.")
                      ('timeout "Attachment download timed out; retry saving.")
                      ('failure "Attachment download failed. Use the synthetic success scenario")
+                     ('quarantine-failure
+                      (concat "Attachment download failed. Choose a destination "
+                              "that supports the macOS quarantine attribute."))
                      (_ "Attachment could not be verified or saved; choose another destination."))
                    messages)))
         (should-not hey--attachment-save-status)

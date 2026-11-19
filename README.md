@@ -143,10 +143,12 @@ to the thread while the download continues. Killing the attachment buffer
 cancels its download. The header shows when saving is active, and the echo
 area reports the result.
 
-Saving requires a filesystem that supports hard links. Downloads use a
-temporary `.hey-attachment-*` directory beside the destination, which is
-removed after completion or cancellation. A crash may leave this directory
-behind. The timeout is 120 seconds; customize
+Saving requires a filesystem that supports hard links. On macOS, HEY CLI
+1.8.1 and later also require the filesystem to support the
+`com.apple.quarantine` extended attribute. The saved file keeps that
+attribute. Downloads use a temporary `.hey-attachment-*` directory beside
+the destination, which is removed after completion or cancellation. A crash
+may leave this directory behind. The timeout is 120 seconds; customize
 `hey-attachment-save-timeout-seconds` to change it.
 
 ## Customization
