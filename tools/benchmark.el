@@ -26,6 +26,8 @@
     (load (expand-file-name (concat (file-name-base file) ".elc") directory)
           nil 'nomessage t)))
 
+(require 'hey-thread-performance-test)
+
 (defun hey-benchmark--measure (name function &optional prepare)
   "Report median elapsed milliseconds and GC count for NAME's FUNCTION.
 Run PREPARE before each sample, outside its timed region, when non-nil."
@@ -39,6 +41,62 @@ Run PREPARE before each sample, outside its timed region, when non-nil."
     (let ((median (nth 2 (sort samples (lambda (a b) (< (car a) (car b)))))))
       (princ (format "%-43s %10.3f ms  %2d GCs\n"
                      name (* 1000 (car median)) (cadr median))))))
+
+(defun hey-benchmark--page-through-list (source)
+  "Measure consecutive first-page and append requests for SOURCE."
+  (let ((pages (cl-loop for page below 100 collect
+                        `(("data"
+                           ("postings" . ,(cl-loop for n from 1 to 25
+                                                   for id = (+ (* page 25) n)
+                                                   collect `(("id" . ,id) ("topic_id" . ,id)
+                                                             ("name" . "Synthetic subject")
+                                                             ("seen" . t))))
+                           ("next_page" . ,(and (< page 99) (number-to-string (1+ page)))))))))
+    (hey-benchmark--measure
+     "Browse 100 pages of 25 postings"
+     (lambda ()
+       (with-temp-buffer
+         (hey-list-mode)
+         (let ((remaining pages))
+           (setq hey--source source
+                 hey--operation-overrides
+                 `((hey-cli-box-view . ,(lambda (_a _b _p _o _k _g success _fail)
+                                          (funcall success (pop remaining))
+                                          nil))))
+           (cl-letf (((symbol-function 'hey--minimum-window-width) (lambda () 120)))
+             (hey-refresh)
+             (while remaining (hey-load-more) (hey--status-header)))
+           (unless (and (= (length hey--records) 2500) (not (hey--continuation-p)))
+             (error "Synthetic paging did not finish"))))))))
+
+(defun hey-benchmark--refresh-thread ()
+  "Measure a reader reopening a long thread before and after a reply arrives."
+  (let* ((body (mapconcat #'identity (make-list 15 "Read [the notes](/topics/1) before Friday.") "\n\n"))
+         (rows (cl-loop for id from 1 to 1000 collect
+                        `(("id" . ,id) ("body" . ,(format "Message %d\n\n%s" id body)))))
+         (initial (json-encode `(("data" . ,rows))))
+         (appended (json-encode `(("data" . ,(append rows '((("id" . 1001) ("body" . "A reply.")))))))))
+    (hey-thread-performance--with-session
+      (let ((thread (hey-thread-performance--open source-buffer)) response)
+        (with-current-buffer thread
+          (let ((noninteractive nil)) (font-lock-mode 1)))
+        (dolist (sample (list (list "Reopen 1000 messages / identical" initial "Message 250")
+                              (list "One new reply / reading message 250" appended "Message 250")
+                              (list "One new reply / reading message 999" appended "Message 999")))
+          (hey-benchmark--measure
+           (car sample)
+           (lambda ()
+             (hey-thread-performance--open source-buffer)
+             (funcall (caar callbacks) response))
+           (lambda ()
+             (hey-thread-performance--open source-buffer)
+             (funcall (caar callbacks) (hey-cli--parse-json initial))
+             (with-current-buffer thread
+               (goto-char (point-min))
+               (search-forward (nth 2 sample))
+               (set-window-start (selected-window) (line-beginning-position)))
+             ;; Independent JSON objects reflect the next real response.
+             (setq response (hey-cli--parse-json (cadr sample))))))))))
 
 (defun hey-benchmark--run ()
   "Measure normalization, rendering, navigation, and transport helpers."
@@ -57,6 +115,8 @@ Run PREPARE before each sample, outside its timed region, when non-nil."
          (envelope `(("ok" . t) ("data" ("postings" . ,raw))))
          (postings (plist-get (hey-model-normalize-postings envelope source) :value))
          (now (encode-time '(0 0 12 17 9 2026 nil -1 nil))))
+    (hey-benchmark--page-through-list source)
+    (hey-benchmark--refresh-thread)
     (hey-benchmark--measure
      "Normalize 1000 postings"
      (lambda () (hey-model-normalize-postings envelope source)))
@@ -111,6 +171,11 @@ Run PREPARE before each sample, outside its timed region, when non-nil."
                               (lambda () (hey--render-list t 130)))
       (hey-benchmark--measure "Header x1000 / 1000 postings"
                               (lambda () (dotimes (_ 1000) (hey--status-header))))
+      (hey-benchmark--measure "Render 1000 labeled rows / narrow"
+                              (lambda () (hey--render-list t 70)))
+      (let ((hey--last-refreshed now))
+        (hey-benchmark--measure "Narrow header x1000 after refresh"
+                                (lambda () (dotimes (_ 1000) (hey--status-header)))))
       ;; Keep responsive columns constant when the public command chooses width.
       (cl-letf (((symbol-function 'hey--minimum-window-width) (lambda () 130)))
         (setq hey--operation-overrides '((hey-cli-box-view . ignore)))

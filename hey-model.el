@@ -957,7 +957,7 @@ and retain the sanitized source timestamp in help text when reformatted."
      ((string= display clean) (propertize display 'face 'hey-date-face))
      (t (propertize display 'face 'hey-date-face 'help-echo clean)))))
 
-(defun hey-model-posting-row (posting layout)
+(defun hey-model-posting-row (posting layout &optional omit-memberships)
   "Format POSTING as a vector for symbolic LAYOUT.
 
 The frozen layouts are:
@@ -967,6 +967,7 @@ The frozen layouts are:
   `narrow'  [subject sender memberships date]
   `minimal' [subject date]
 
+With OMIT-MEMBERSHIPS, leave the membership cell out of the vector.
 Only explicit `unseen' subjects get a marker and `hey-unseen-face'.
 Memberships retain their complete values in `help-echo'."
   (let* ((subject (hey-posting-subject posting))
@@ -982,15 +983,12 @@ Memberships retain their complete values in `help-echo'."
                  (hey-posting-timestamp posting)))
          (sender (hey-posting-contacts posting)))
     (pcase layout
-      ('wide
-       (vector subject-cell sender
-               (hey-model--row-memberships posting 28) date))
-      ('medium
-       (vector subject-cell sender
-               (hey-model--row-memberships posting 24) date))
-      ('narrow
-       (vector subject-cell sender
-               (hey-model--row-memberships posting 16) date))
+      ((or 'wide 'medium 'narrow)
+       (if omit-memberships (vector subject-cell sender date)
+         (vector subject-cell sender
+                 (hey-model--row-memberships
+                  posting (pcase layout ('wide 28) ('medium 24) ('narrow 16)))
+                 date)))
       ('minimal (vector subject-cell date))
       (_ (error "Unknown HEY posting layout: %S" layout)))))
 
@@ -1067,8 +1065,12 @@ Memberships retain their complete values in `help-echo'."
 Metadata is sanitized and Markdown-escaped.  Entry bodies are already
 Markdown from the CLI and are inserted unchanged; their headings do not
 define UI entry boundaries."
-  (let ((parts (list (hey-model-thread-preamble thread)))
-        (entries (hey-thread-entries thread)))
+  (hey-model-entries-markdown
+   (hey-thread-entries thread) (hey-model-thread-preamble thread)))
+
+(defun hey-model-entries-markdown (entries &optional preamble)
+  "Return Markdown for ENTRIES in order, optionally starting with PREAMBLE."
+  (let ((parts (and preamble (list preamble))))
     (dolist (entry entries)
       (let* ((entry-id (hey-entry-id entry))
              (header (format "\n## %s — %s\n\n"

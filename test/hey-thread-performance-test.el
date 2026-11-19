@@ -275,5 +275,88 @@
       (should (memq 'hey-warning-face
                     (ensure-list (get-text-property (match-beginning 0) 'face)))))))
 
+(ert-deftest hey-thread-identical-response-retains-rendered-text ()
+  "Keep the rendered messages on an identical response and repair changed text."
+  (hey-thread-performance--with-session
+    (let ((thread (hey-thread-performance--open source-buffer)))
+      (funcall (caar callbacks) (hey-thread-performance--envelope))
+      (with-current-buffer thread
+        (search-forward "target")
+        (let ((position (point))
+              (tick (buffer-chars-modified-tick)))
+          (save-restriction
+            (narrow-to-region (line-beginning-position) (line-end-position))
+            (hey-thread-performance--open source-buffer)
+            (funcall (caar callbacks) (hey-thread-performance--envelope))
+            (should (buffer-narrowed-p)))
+          (should (= (buffer-chars-modified-tick) tick))
+          (should (= (point) position))
+          (should-not hey--loading))
+        (hey-thread-performance--open source-buffer)
+        (let ((inhibit-read-only t)) (insert "external edit"))
+        (funcall (caar callbacks) (hey-thread-performance--envelope))
+        (should-not (string-match-p "external edit" (buffer-string)))))))
+
+(ert-deftest hey-thread-refresh-updates-notices-and-warnings-with-identical-entries ()
+  "Apply changes to response metadata even when every message is unchanged."
+  (hey-thread-performance--with-session
+    (let ((thread (hey-thread-performance--open source-buffer))
+          (warned (hey-thread-performance--envelope))
+          (notice (cons '("notice" . "Partial thread") (hey-thread-performance--envelope))))
+      (setcdr (assoc "data" warned)
+              (cons '(("kind" . "message")) (cdr (assoc "data" warned))))
+      (funcall (caar callbacks) (hey-thread-performance--envelope))
+      (hey-thread-performance--open source-buffer)
+      (funcall (caar callbacks) warned)
+      (with-current-buffer thread
+        (should (string-match-p "malformed thread" (buffer-string))))
+      (hey-thread-performance--open source-buffer)
+      (funcall (caar callbacks) (hey-thread-performance--envelope))
+      (with-current-buffer thread
+        (should-not (string-match-p "malformed thread" (buffer-string))))
+      (hey-thread-performance--open source-buffer)
+      (funcall (caar callbacks) notice)
+      (with-current-buffer thread
+        (should (string-match-p "Partial thread" (buffer-string))))
+      (hey-thread-performance--open source-buffer)
+      (funcall (cdar callbacks) (make-hey-error :message "Offline"))
+      (hey-thread-performance--open source-buffer)
+      (funcall (caar callbacks) (hey-thread-performance--envelope))
+      (with-current-buffer thread
+        (should-not hey--stale)
+        (should-not hey--warnings)
+        (should-not (string-match-p "Partial thread\\|malformed thread\\|Offline"
+                                    (buffer-string)))))))
+
+(ert-deftest hey-thread-updates-final-messages-in-place ()
+  "Retain the earlier messages and match a full render after a tail update."
+  (hey-thread-performance--with-session
+    (let ((thread (hey-thread-performance--open source-buffer)))
+      (funcall (caar callbacks) (hey-thread-performance--envelope))
+      (with-current-buffer thread
+        (search-forward "First message")
+        (let ((anchor (copy-marker (point)))
+              (reply '(("id" . 803) ("creator" ("name" . "Charlie"))
+                       ("body" . "A new reply."))))
+          (unwind-protect
+              (dolist (change '(append replace))
+                (let ((response (hey-thread-performance--envelope)))
+                  (setcdr (assoc "data" response)
+                          (append (cdr (assoc "data" response))
+                                  (list (copy-tree reply))))
+                  (when (eq change 'replace)
+                    (setcdr (assoc "body" (car (last (cdr (assoc "data" response)))))
+                            "An edited reply."))
+                  (hey-thread-performance--open source-buffer)
+                  (funcall (caar callbacks) response)
+                  (should (looking-back "First message" (line-beginning-position)))
+                  (should (= anchor (point)))
+                  (should (= (length (hey--entry-starts)) 3))
+                  (should (equal (buffer-substring-no-properties (point-min) (point-max))
+                                 (substring-no-properties
+                                  (hey-model-thread-markdown hey--thread))))
+                  (should (= hey--thread-footer-start (point-max)))))
+            (set-marker anchor nil)))))))
+
 (provide 'hey-thread-performance-test)
 ;;; hey-thread-performance-test.el ends here

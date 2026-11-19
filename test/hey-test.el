@@ -352,7 +352,9 @@
       (should (eq hey--layout 'wide))
       (should (= (length (cadar (hey--tabulated-entries)))
                  (length tabulated-list-format)))
-      (hey--resize-buffer 70)
+      (cl-letf (((symbol-function 'hey-model--row-memberships)
+                 (lambda (&rest _) (ert-fail "Formatted a hidden membership column"))))
+        (hey--resize-buffer 70))
       (should (eq hey--layout 'narrow))
       (should (= (length (cadar (hey--tabulated-entries)))
                  (length tabulated-list-format)))
@@ -439,6 +441,23 @@
       (should (string-match "updated [0-9][0-9]:[0-9][0-9]" header))
       (should (eq (get-text-property (match-beginning 0) 'face header)
                   'hey-header-updated-face)))))
+
+(ert-deftest hey-ui-status-header-formats-only-visible-refresh-times ()
+  "Format the refresh time only in the wide list header."
+  (hey-test-with-list
+    (let ((hey--last-refreshed (encode-time 0 0 11 3 9 2026))
+          calls)
+      (cl-letf (((symbol-function 'format-time-string)
+                 (lambda (format time)
+                   (push (list format time) calls)
+                   "updated 11:00")))
+        (dolist (layout '(minimal narrow medium))
+          (let ((hey--layout layout))
+            (should-not (string-match-p "updated" (hey--status-header)))))
+        (should-not calls)
+        (let ((hey--layout 'wide))
+          (should (string-match-p "updated 11:00" (hey--status-header))))
+        (should (equal calls (list (list "updated %H:%M" hey--last-refreshed))))))))
 
 (ert-deftest hey-ui-status-header-state-face-preserves-severity-precedence ()
   "Let a failure outrank a partial-result warning in the header state."
@@ -2000,6 +2019,25 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
         (hey-refresh)
         (should (= calls 6))
         (should (= (hash-table-count hey--date-cache) 1))))))
+
+(ert-deftest hey-list-refresh-replaces-indexed-posting-and-memberships ()
+  "Keep the old posting during a refresh and use the new one after it finishes."
+  (hey-test-with-list
+    (let (success)
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _s _p _o _k _g ok _bad) (setq success ok) nil))))
+      (cl-letf (((symbol-function 'hey--minimum-window-width) (lambda () 130)))
+        (hey-list-test--load (list (hey-test--posting 1 11 "Before")))
+        (should (assq 'memberships hey--columns))
+        (hey-refresh)
+        (should (equal (hey-posting-subject (hey--posting-at-point)) "Before"))
+        (funcall success
+                 (hey-test--postings-envelope
+                  '((("id" . 1) ("topic_id" . 11) ("name" . "After")))))
+        (should (equal (tabulated-list-get-id) '("101" "1")))
+        (should (equal (hey-posting-subject (hey--posting-at-point)) "After"))
+        (should-not (assq 'memberships hey--columns))))))
 
 (ert-deftest hey-list-status-recovers-after-an-external-table-reprint ()
   "Detect a displaced footer marker before changing an externally printed table."

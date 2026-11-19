@@ -189,6 +189,13 @@ Copying and opening a link always use the complete destination."
 (defvar-local hey--configured-account nil)
 (defvar-local hey--source nil)
 (defvar-local hey--records nil)
+
+(cl-defstruct (hey--posting-index (:constructor hey--make-posting-index))
+  "Record list, composite-key table, and membership column presence."
+  records by-key memberships)
+
+(defvar-local hey--posting-index nil
+  "Index of identities and visible memberships in the current posting list.")
 (defvar-local hey--count-cache nil
   "Record list paired with its unread/displayed header text.
 Clear this cache when records change in place, before redrawing rows.")
@@ -217,6 +224,8 @@ Clear this cache when records change in place, before redrawing rows.")
 (defvar-local hey--columns nil)
 (defvar-local hey--columns-key nil)
 (defvar-local hey--thread nil)
+(defvar-local hey--thread-rendered-tick nil
+  "Character modification tick after a package-owned thread render.")
 (defvar-local hey--thread-count-text nil
   "Header count for the last rendered thread snapshot.")
 (defvar-local hey--thread-key nil)
@@ -355,21 +364,14 @@ a named operation, never the private process primitive."
         ((>= width 58) 'narrow)
         (t 'minimal)))
 
-(defun hey--memberships-present-p ()
-  "Return non-nil when any cached posting has a membership."
-  (cl-some (lambda (posting)
-             (or (hey-posting-labels posting)
-                 (hey-posting-collections posting)))
-           hey--records))
-
 (defun hey--columns-for-layout (layout)
   "Return the visible column specifications for LAYOUT.
 
 The memberships column is omitted when it would be empty for every cached
 posting, and at the narrow breakpoint where Subject takes priority."
   (let ((columns (alist-get layout hey--list-layouts)))
-    (if (and (not (eq layout 'narrow))
-             (hey--memberships-present-p))
+    (if (and hey--records (memq layout '(wide medium))
+             (hey--posting-index-memberships (hey--index-postings hey--records)))
         columns
       (cl-remove 'memberships columns :key #'car))))
 
@@ -478,28 +480,18 @@ cell's help text, except when the cell already carries its own help text."
 
 (defun hey--row-vector (posting now)
   "Return the display vector for normalized POSTING at time NOW."
-  (let* ((layout-columns (alist-get hey--layout hey--list-layouts))
-         (row (hey-model-posting-row posting hey--layout))
-         (subject-index (cl-position 'subject layout-columns :key #'car))
-         (date-index (cl-position 'date layout-columns :key #'car)))
-    (aset row date-index
-          (hey--list-date (aref row date-index) now))
+  (let* ((row (hey-model-posting-row posting hey--layout
+                                     (not (assq 'memberships hey--columns))))
+         ;; Every layout starts with Subject and ends with When.
+         (date (1- (length row))))
+    (aset row date (hey--list-date (aref row date) now))
     (when (eq (hey-posting-kind posting) 'bundle)
-      (aset row subject-index
-            (concat (aref row subject-index)
-                    (propertize "  ◇ Bundle" 'face 'hey-status-face))))
-    (vconcat
-     (cl-loop for column in layout-columns
-              for value across row
-              when (assq (car column) hey--columns)
-              collect
-              (let* ((field (car column))
-                     (visible-index
-                      (cl-position field hey--columns :key #'car))
-                     (format (aref tabulated-list-format visible-index)))
-                (if (memq field '(subject sender date memberships))
-                    (hey--fit-list-cell value (car format) (cadr format))
-                  value))))))
+      (aset row 0 (concat (aref row 0)
+                          (propertize "  ◇ Bundle" 'face 'hey-status-face))))
+    (cl-loop for (title width) across tabulated-list-format
+             for index from 0
+             do (aset row index (hey--fit-list-cell (aref row index) title width)))
+    row))
 
 (defun hey--tabulated-entries ()
   "Return tabulated entries from buffer-local normalized records."
@@ -630,6 +622,7 @@ When WIDTH is non-nil, use it for responsive column selection."
         (column (current-column))
         (inhibit-read-only t))
     (setq hey--count-cache nil)
+    (unless hey--records (setq hey--posting-index nil))
     (hey--configure-columns width)
     (setq tabulated-list-entries #'hey--tabulated-entries)
     (tabulated-list-print preserve-point)
@@ -736,10 +729,6 @@ Omit lower-priority elements as the window narrows."
                     (hey--error 'hey-header-error-face)
                     (hey--warnings 'hey-header-warning-face)
                     (t 'hey-header-status-face)))))
-         (updated (when hey--last-refreshed
-                    (hey--header-element
-                     (format-time-string "updated %H:%M" hey--last-refreshed)
-                     'hey-header-updated-face)))
          (account (hey--header-element (hey--account-title)
                                        'hey-header-account-face))
          (source (hey--header-element (hey--source-title)
@@ -751,7 +740,12 @@ Omit lower-priority elements as the window narrows."
                      (hey--layout-for-width (hey--minimum-window-width)))))
     (hey--header-join
      (pcase layout
-       ('wide (list account source shown state updated))
+       ('wide
+        (list account source shown state
+              (when hey--last-refreshed
+                (hey--header-element
+                 (format-time-string "updated %H:%M" hey--last-refreshed)
+                 'hey-header-updated-face))))
        ('medium (list account source shown state))
        ('narrow (list source shown state))
        (_ (list source shown state))))))
@@ -764,12 +758,12 @@ Omit lower-priority elements as the window narrows."
 
 (defun hey--window-size-change (_frame)
   "Update visible HEY list layouts after a window size change."
-  (dolist (buffer (buffer-list))
-    (when (buffer-live-p buffer)
-      (with-current-buffer buffer
-        (when (and (derived-mode-p 'hey-list-mode)
-                   (get-buffer-window-list buffer nil t))
-          (hey--resize-buffer))))))
+  (let (visible)
+    ;; A list shared by several frames uses its narrowest window.
+    (walk-windows (lambda (window) (cl-pushnew (window-buffer window) visible))
+                  'no-minibuffer t)
+    (dolist (buffer visible)
+      (with-current-buffer buffer (hey--resize-buffer)))))
 
 (defun hey--reset-source (source)
   "Return SOURCE copied with first-page pagination state."
@@ -806,17 +800,39 @@ the named operation's result."
                  (hey-source-id source))
                page owner source-key generation success failure)))
 
-(defun hey--deduplicate (existing additions)
-  "Append unique ADDITIONS to EXISTING by composite posting identity."
-  (let ((seen (make-hash-table :test 'equal)) result)
-    (dolist (posting existing)
-      (puthash (hey-posting-key posting) t seen)
-      (push posting result))
-    (dolist (posting additions)
-      (unless (gethash (hey-posting-key posting) seen)
-        (puthash (hey-posting-key posting) t seen)
-        (push posting result)))
-    (nreverse result)))
+(defun hey--index-posting (posting index)
+  "Add POSTING to INDEX and return t if its composite key is new."
+  (let ((key (hey-posting-key posting))
+        (table (hey--posting-index-by-key index)))
+    (unless (gethash key table)
+      (puthash key posting table)
+      (when (or (hey-posting-labels posting) (hey-posting-collections posting))
+        (setf (hey--posting-index-memberships index) t))
+      t)))
+
+(defun hey--index-postings (records)
+  "Return an index of RECORDS, rebuilding it when the list is replaced."
+  (unless (and hey--posting-index
+               (eq records (hey--posting-index-records hey--posting-index)))
+    (let ((index (hey--make-posting-index
+                  :records records :by-key (make-hash-table :test #'equal))))
+      (dolist (posting records) (hey--index-posting posting index))
+      (setq hey--posting-index index)))
+  hey--posting-index)
+
+(defun hey--merge-page (existing incoming)
+  "Store the ordered union of EXISTING and INCOMING and return the new postings."
+  (let ((index (hey--index-postings existing)) additions)
+    ;; If a nonlocal exit interrupts this update, rebuild from committed rows.
+    (setq hey--posting-index nil)
+    (dolist (posting incoming)
+      (when (hey--index-posting posting index)
+        (push posting additions)))
+    (setq additions (nreverse additions)
+          hey--records (if additions (append existing additions) existing))
+    (setf (hey--posting-index-records index) hey--records)
+    (setq hey--posting-index index)
+    additions))
 
 (defun hey--refresh (&optional append)
   "Refresh the current source, or APPEND its next page."
@@ -832,7 +848,6 @@ the named operation's result."
          (request-source (if append hey--source (hey--reset-source hey--source)))
          (page (and append (hey-source-continuation hey--source)))
          (previous-records hey--records)
-         (old-count (length hey--records))
          (backend hey--operation-overrides)
          (mark-target hey--mark-read-status-target))
     (unless (hey--mark-read-pending-p mark-target backend)
@@ -855,17 +870,16 @@ the named operation's result."
                             (incoming (hey--apply-read-acknowledgements
                                        (plist-get normalized :value)))
                             (updated-source (plist-get normalized :source))
-                            (combined (hey--deduplicate
-                                       (and append hey--records) incoming)))
+                            (additions (hey--merge-page
+                                        (and append hey--records) incoming)))
                        ;; Stop cursor pagination when it adds no new rows.
                        (when (and append
-                                  (= old-count (length combined))
+                                  (null additions)
                                   (eq (hey-source-continuation-kind updated-source)
                                       'cursor))
                          (setf (hey-source-continuation updated-source) nil
                                (hey-source-exhausted updated-source) t))
-                       (setq hey--records combined
-                             hey--source updated-source
+                       (setq hey--source updated-source
                              hey--warnings (plist-get normalized :warnings)
                              hey--loading nil
                              hey--stale nil
@@ -881,8 +895,7 @@ the named operation's result."
                                         mark-target backend)))
                          (hey--mark-read-observe mark-target backend incoming))
                        (if append
-                           (hey--append-list-rows (nthcdr old-count combined)
-                                                  previous-records)
+                           (hey--append-list-rows additions previous-records)
                          (hey--render-list t))
                        (when (not (eq (hey-source-kind hey--source) 'search))
                          (when-let* ((target
@@ -1109,13 +1122,12 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
       (when (and (derived-mode-p 'hey-list-mode)
                  (equal source-key
                         (and hey--source (hey-source-key hey--source))))
-        (goto-char (point-min))
-        (let (found)
-          (while (and (not found) (not (eobp)))
-            (if (equal row-id (tabulated-list-get-id))
-                (setq found t)
-              (forward-line 1)))
-          found)))))
+        (unless (equal row-id (tabulated-list-get-id))
+          (goto-char (point-min)))
+        (beginning-of-line)
+        (while (and (not (eobp)) (not (equal row-id (tabulated-list-get-id))))
+          (forward-line 1))
+        (not (eobp))))))
 
 (defun hey-quit ()
   "Quit the current HEY view after restoring its originating row."
@@ -1287,7 +1299,8 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
 (defun hey--posting-at-point ()
   "Return the normalized posting at point, or signal a user error."
   (let ((identity (tabulated-list-get-id)))
-    (or (cl-find identity hey--records :key #'hey-posting-key :test #'equal)
+    (or (gethash identity (hey--posting-index-by-key
+                           (hey--index-postings hey--records)))
         (user-error "No HEY posting at point"))))
 
 (defun hey--origin-for (posting)
@@ -1374,7 +1387,7 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                         (eq hey--operation-overrides backend))))
         (hey--next-generation)
         (when (and reuse (not (equal context hey--thread-origin-context)))
-          (hey--update-thread-context context))
+          (save-restriction (widen) (hey--update-thread-context context)))
         (setq hey--origin origin
               hey--thread (and reuse hey--thread)
               hey--thread-origin-context context
@@ -1400,12 +1413,14 @@ INTENT is `same-window' or `other-window'.  Return the selected window."
                               (equal thread-key
                                      (buffer-local-value 'hey--thread-key buffer)))
                      (with-current-buffer buffer
-                       (let ((result (hey-model-normalize-thread envelope context)))
+                       (let* ((result (hey-model-normalize-thread envelope context))
+                              (previous (and reuse hey--thread))
+                              (warnings hey--warnings))
                          (setq hey--thread (plist-get result :value)
                                hey--warnings (plist-get result :warnings)
                                hey--loading nil hey--stale nil
                                hey--error nil hey--request nil)
-                         (hey--render-thread reuse)))))
+                         (hey--update-thread previous warnings)))))
                  (lambda (error)
                    (when (and (buffer-live-p buffer)
                               (= generation
@@ -1901,12 +1916,25 @@ so restoration cannot redirect an origin that changed during rendering."
     (font-lock-ensure (max (point-min) (- position 2048))
                       (min (point-max) (+ position 6144)))))
 
+(defun hey--replace-thread-preamble ()
+  "Replace the package-owned preamble using the current thread."
+  (let ((empty (and (= hey--thread-footer-start hey--thread-preamble-end)
+                    (null (hey-thread-entries hey--thread))))
+        (text (hey-model-thread-preamble hey--thread))
+        (inhibit-read-only t))
+    ;; Changing text here invalidates Markdown syntax through the reader's point.
+    (unless (equal text (buffer-substring-no-properties
+                         (point-min) hey--thread-preamble-end))
+      (delete-region (point-min) hey--thread-preamble-end)
+      (goto-char (point-min))
+      (insert text)
+      (setq hey--thread-preamble-end (point))
+      (when empty (set-marker hey--thread-footer-start (point)))
+      (hey--fontify-thread-preamble))))
+
 (defun hey--update-thread-context (context)
   "Update cached thread metadata from CONTEXT without replacing entry bodies."
-  (let ((view (hey--thread-view-state))
-        (empty (and (= hey--thread-footer-start hey--thread-preamble-end)
-                    (null (hey-thread-entries hey--thread))))
-        (inhibit-read-only t))
+  (let ((view (hey--thread-view-state)))
     (setq hey--thread (copy-hey-thread hey--thread))
     (setf (hey-thread-account-name hey--thread) (plist-get context :account-name)
           (hey-thread-posting-id hey--thread) (plist-get context :posting-id)
@@ -1918,12 +1946,7 @@ so restoration cannot redirect an origin that changed during rendering."
           (hey-thread-collections hey--thread) (plist-get context :collections)
           (hey-thread-collections-known-p hey--thread)
           (plist-get context :collections-known-p))
-    (delete-region (point-min) hey--thread-preamble-end)
-    (goto-char (point-min))
-    (insert (hey-model-thread-preamble hey--thread))
-    (setq hey--thread-preamble-end (point))
-    (when empty (set-marker hey--thread-footer-start (point)))
-    (hey--fontify-thread-preamble)
+    (hey--replace-thread-preamble)
     (hey--restore-thread-view view)
     (hey--fontify-thread-view)))
 
@@ -1931,18 +1954,20 @@ so restoration cannot redirect an origin that changed during rendering."
   "Update the cached thread's refresh notice without replacing its body."
   (let ((inhibit-read-only t))
     (save-excursion
-      (when (and (markerp hey--thread-footer-start)
-                 (marker-position hey--thread-footer-start))
-        (delete-region hey--thread-footer-start (point-max))
-        (when hey--error
-          (goto-char (point-max))
-          (let ((start (point)))
-            (insert "\nShowing cached thread. Refresh failed: "
-                    (hey-error-message hey--error) "\n"
-                    (hey--error-guidance
-                     hey--error "Return to the list and reopen the thread to retry.")
-                    "\n")
-            (hey--thread-face start (point) 'hey-error-face)))))
+      (save-restriction
+        (widen)
+        (when (and (markerp hey--thread-footer-start)
+                   (marker-position hey--thread-footer-start))
+          (delete-region hey--thread-footer-start (point-max))
+          (when hey--error
+            (goto-char (point-max))
+            (let ((start (point)))
+              (insert "\nShowing cached thread. Refresh failed: "
+                      (hey-error-message hey--error) "\n"
+                      (hey--error-guidance
+                       hey--error "Return to the list and reopen the thread to retry.")
+                      "\n")
+              (hey--thread-face start (point) 'hey-error-face))))))
     (force-mode-line-update)))
 
 (defun hey--render-thread (&optional preserve-point)
@@ -1964,7 +1989,46 @@ so restoration cannot redirect an origin that changed during rendering."
     (if view (hey--restore-thread-view view) (goto-char (point-min)))
     ;; Redisplay fontifies remaining body text as it enters a visible window.
     (hey--fontify-thread-view)
-    (hey--render-thread-status)))
+    (hey--render-thread-status)
+    (setq hey--thread-rendered-tick (buffer-chars-modified-tick))))
+
+(defun hey--update-thread (previous warnings)
+  "Reuse unchanged messages from PREVIOUS when the cached text is intact.
+WARNINGS are the warnings rendered with PREVIOUS."
+  (cond
+   ((or (not previous)
+        (not (equal hey--thread-rendered-tick (buffer-chars-modified-tick)))
+        (not (equal warnings hey--warnings)))
+    (hey--render-thread previous))
+   ((equal previous hey--thread) (hey--render-thread-status))
+   ((buffer-narrowed-p) (hey--render-thread t))
+   (t
+    (let ((before (hey-thread-entries previous))
+          (after (hey-thread-entries hey--thread)))
+      (while (and before after (equal (car before) (car after)))
+        (setq before (cdr before) after (cdr after)))
+      ;; Append new replies or replace the last message.  Other changes
+      ;; and cached warnings use the full renderer and its footer.
+      (if (or (null after) (cdr before) warnings)
+          (hey--render-thread t)
+        (let ((view (hey--thread-view-state))
+              (inhibit-read-only t))
+          (goto-char hey--thread-footer-start)
+          (when before (hey-previous-entry))
+          (let ((start (point))
+                (end (point-max)))
+            (goto-char end)
+            ;; Keep the buffer end intact while deleting: markdown-mode
+            ;; immediately checks syntax after a deletion at the end.
+            (insert (hey-model-entries-markdown after))
+            (delete-region start end)
+            (set-marker hey--thread-footer-start (point-max)))
+          (hey--replace-thread-preamble)
+          (setq hey--thread-count-text nil)
+          (hey--restore-thread-view view)
+          (hey--fontify-thread-view)
+          (hey--render-thread-status)
+          (setq hey--thread-rendered-tick (buffer-chars-modified-tick))))))))
 
 (defun hey--entry-starts ()
   "Return positions of all package-owned HEY entry boundaries."

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep rendered messages in place when a thread refresh returns the same
+  content. Append new replies or replace the final message without rebuilding
+  the earlier entries.
+- Index postings as pages arrive. Return directly to the original row when
+  the list's point is still on it. Skip hidden columns and header times in
+  narrow lists.
 - Find links within the current message when moving through long threads.
   Reference links still use definitions from the accessible thread.
 - Reuse the thread's message count when redrawing its header and share local
