@@ -83,6 +83,12 @@ sources such as search which do not."
   seen
   labels collections app-url matches original-index)
 
+(cl-defstruct hey-date-format
+  "Local date and localized month names shared by a batch of posting rows.
+TODAY is a decoded local time.  Use a fresh format when the date, time zone,
+or locale changes."
+  today (month-names (make-vector 12 nil)))
+
 (cl-defstruct hey-entry
   "One normalized entry in a HEY thread.
 KIND is 'comment or 'access-notice for internal entries and 'message
@@ -906,9 +912,18 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
                   cell bounded nil nil "…")))
     (if (string-empty-p help) cell (propertize cell 'help-echo help))))
 
+(defun hey-model--posting-month-name (time month names)
+  "Return the localized abbreviation for MONTH of TIME, caching it in NAMES.
+NAMES is a 12-element vector or nil for an individual posting."
+  (or (and names (aref names (1- month)))
+      (let ((name (format-time-string "%b" time)))
+        (when names (aset names (1- month) name))
+        name)))
+
 (defun hey-model-format-posting-timestamp (timestamp now)
   "Format posting TIMESTAMP relative to NOW in the local time zone.
 
+NOW can be a time value or a `hey-date-format' shared by rows in a list.
 Return HH:MM for the current local date, abbreviated month and day within the
 current year, or abbreviated month, day, and year otherwise.  Malformed
 timestamps fall back to their sanitized original text.  Apply `hey-date-face'
@@ -918,22 +933,24 @@ and retain the sanitized source timestamp in help text when reformatted."
           (if (null now)
               clean
             (condition-case nil
-                (let* ((time (encode-time (iso8601-parse clean)))
+                (let* ((shared (hey-date-format-p now))
+                       (time (encode-time (iso8601-parse clean)))
                        (decoded (decode-time time))
-                       (now-decoded (decode-time now))
+                       (today (if shared (hey-date-format-today now)
+                                (decode-time now)))
                        (day (decoded-time-day decoded))
-                       (year (decoded-time-year decoded)))
-                  (cond
-                   ((and (= year (decoded-time-year now-decoded))
-                         (= (decoded-time-month decoded)
-                            (decoded-time-month now-decoded))
-                         (= day (decoded-time-day now-decoded)))
-                    (format "%02d:%02d" (decoded-time-hour decoded)
-                            (decoded-time-minute decoded)))
-                   ((= year (decoded-time-year now-decoded))
-                    (format "%s %d" (format-time-string "%b" time) day))
-                   (t (format "%s %d, %d" (format-time-string "%b" time)
-                              day year))))
+                       (month (decoded-time-month decoded))
+                       (year (decoded-time-year decoded))
+                       (same-year (= year (decoded-time-year today))))
+                  (if (and same-year (= month (decoded-time-month today))
+                           (= day (decoded-time-day today)))
+                      (format "%02d:%02d" (decoded-time-hour decoded)
+                              (decoded-time-minute decoded))
+                    (let ((name (hey-model--posting-month-name
+                                 time month
+                                 (and shared (hey-date-format-month-names now)))))
+                      (if same-year (format "%s %d" name day)
+                        (format "%s %d, %d" name day year)))))
               (error clean)))))
     (cond
      ((string-empty-p display) display)

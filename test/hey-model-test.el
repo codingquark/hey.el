@@ -586,6 +586,26 @@ it, and a malformed literal fails at the browser rather than here."
                     (hey-model-format-posting-timestamp timestamp instant))
                    (format-time-string "%H:%M" instant)))))
 
+(ert-deftest hey-model-reuses-month-names-across-posting-dates ()
+  (let* ((now (encode-time '(0 0 12 3 9 2026 nil -1 nil)))
+         (shared (make-hey-date-format :today (decode-time now)))
+         (stamps '("2026-09-03T09:30:00" "2026-04-20T12:00:00"
+                   "2025-04-19T12:00:00" "2026-07-17T12:00:00" "unknown"))
+         (expected (mapcar (lambda (stamp)
+                             (hey-model-format-posting-timestamp stamp now))
+                           stamps))
+         (formatter (symbol-function 'format-time-string))
+         (months 0))
+    (cl-letf (((symbol-function 'format-time-string)
+               (lambda (format &rest arguments)
+                 (when (equal format "%b") (cl-incf months))
+                 (apply formatter format arguments))))
+      (cl-loop for stamp in stamps for cell in expected
+               do (should (equal-including-properties
+                           (hey-model-format-posting-timestamp stamp shared)
+                           cell)))
+      (should (= months 2)))))
+
 (ert-deftest hey-model-falls-back-for-malformed-posting-timestamp ()
   (should (equal (substring-no-properties
                   (hey-model-format-posting-timestamp

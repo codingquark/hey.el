@@ -194,6 +194,8 @@ Copying and opening a link always use the complete destination."
 Clear this cache when records change in place, before redrawing rows.")
 (defvar-local hey--date-cache nil
   "Formatted date cells for the current source and local date context.")
+(defvar-local hey--date-format nil
+  "Local date and month names shared by cells in the current date cache.")
 (defvar-local hey--date-context nil)
 (defvar hey--time-zone-generation 0
   "Generation of Emacs time zone rules used by prepared dates.")
@@ -215,6 +217,8 @@ Clear this cache when records change in place, before redrawing rows.")
 (defvar-local hey--columns nil)
 (defvar-local hey--columns-key nil)
 (defvar-local hey--thread nil)
+(defvar-local hey--thread-count-text nil
+  "Header count for the last rendered thread snapshot.")
 (defvar-local hey--thread-key nil)
 (defvar-local hey--thread-preamble-end nil
   "End of the package-owned thread metadata, before entry bodies.")
@@ -459,14 +463,17 @@ cell's help text, except when the cell already carries its own help text."
         (setq hey--date-context (copy-tree context)
               hey--date-cache nil))
       (unless hey--date-cache
-        (setq hey--date-cache (make-hash-table :test #'equal))))))
+        (setq hey--date-cache (make-hash-table :test #'equal)
+              hey--date-format
+              (and now (make-hey-date-format :today (decode-time now))))))))
 
 (defun hey--list-date (timestamp now)
   "Return the date cell for TIMESTAMP at NOW, reusing this render's cache."
   (if (not hey--render-date-cache)
       (hey-model-format-posting-timestamp timestamp now)
     (or (gethash timestamp hey--render-date-cache)
-        (puthash timestamp (hey-model-format-posting-timestamp timestamp now)
+        (puthash timestamp
+                 (hey-model-format-posting-timestamp timestamp hey--date-format)
                  hey--render-date-cache))))
 
 (defun hey--row-vector (posting now)
@@ -1784,10 +1791,12 @@ FACE defaults to `hey-status-face'."
                       (hey--header-element "Refreshing…" 'hey-header-status-face))
                      (hey--stale
                       (hey--header-element "Stale" 'hey-header-warning-face))))
-           (count (hey--header-element
-                   (format "%d shown"
-                           (hey-model-thread-message-count hey--thread))
-                   'hey-header-count-face)))
+           (count (or hey--thread-count-text
+                      (setq hey--thread-count-text
+                            (hey--header-element
+                             (format "%d shown"
+                                     (hey-model-thread-message-count hey--thread))
+                             'hey-header-count-face)))))
       (hey--header-join
        (cond
         ((>= width 100) (list account source subject count refresh status))
@@ -1942,7 +1951,8 @@ so restoration cannot redirect an origin that changed during rendering."
         (inhibit-read-only t))
     (erase-buffer)
     (insert (hey-model-thread-markdown hey--thread))
-    (setq hey--thread-preamble-end
+    (setq hey--thread-count-text nil
+          hey--thread-preamble-end
           (or (text-property-any (point-min) (point-max) 'hey-entry-start t)
               (point-max)))
     (when hey--warnings
@@ -2040,17 +2050,32 @@ Scan balanced parentheses to include any nested destination parentheses."
   "Return the validated body-link destination at point, or nil.
 Preserve match data and the destination's percent escapes."
   (save-match-data
-    (let ((raw
-           ;; markdown-mode decodes percent escapes in inline links and stops
-           ;; at semicolons in bare and angle-bracket URIs.
-           (if (thing-at-point-looking-at markdown-regex-link-inline)
-               (hey--inline-link-destination (match-beginning 5) (match-end 0))
-             (hey--markdown-uri-at-point))))
+    (let (destination reference)
+      (save-restriction
+        ;; Markdown's link matchers scan the accessible buffer from its start.
+        ;; A single entry contains the whole link, including multiline labels.
+        (let ((start (previous-single-property-change
+                      (min (1+ (point)) (point-max)) 'hey-entry-id nil (point-min))))
+          ;; Prepare preceding syntax while it is accessible.  Markdown can
+          ;; then request more within this entry as it scans the link.
+          (syntax-propertize start)
+          (narrow-to-region start (next-single-property-change
+                                   (point) 'hey-entry-id nil (point-max))))
+        (let ((raw
+               ;; Preserve percent escapes and semicolons in written URLs.
+               (if (thing-at-point-looking-at markdown-regex-link-inline)
+                   (hey--inline-link-destination (match-beginning 5) (match-end 0))
+                 (hey--markdown-uri-at-point))))
+          (if raw
+              (setq destination (string-replace "&amp;" "&" raw))
+            (pcase-let ((`(,_ ,_ ,label ,url ,ref . ,_)
+                         (markdown-link-at-pos (point))))
+              (setq destination url
+                    reference (if (equal ref "") label ref))))))
+      ;; Keep the first reference definition in the caller's accessible thread.
       (hey-model-resolve-body-url
-       (if raw
-           ;; Undo one layer of the CLI's Markdown escaping.
-           (string-replace "&amp;" "&" raw)
-         (markdown-link-url))))))
+       (or destination
+           (and reference (car (markdown-reference-definition reference))))))))
 
 (defun hey--link-at-point-or-error ()
   "Return the destination of the activatable link at point, or fail."

@@ -203,7 +203,8 @@ The package archive in `dist/` contains the three runtime libraries,
 Run `make benchmark` to measure normalization, list and thread rendering,
 header updates, message navigation, attachment lists, and transport helpers.
 List workloads cover cold and warm rendering, refresh status, and page appends;
-thread workloads include the first screen of a long conversation.
+thread workloads cover the first screen of a long conversation, header
+updates, and cursor movement in messages that contain links.
 It uses compiled package code and synthetic data, starts no subprocesses, and
 reports the median of five samples with garbage collection included. Timings
 are diagnostic, with no pass/fail threshold, and exclude CLI and network latency.

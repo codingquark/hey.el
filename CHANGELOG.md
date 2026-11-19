@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Find links within the current message when moving through long threads.
+  Reference links still use definitions from the accessible thread.
+- Reuse the thread's message count when redrawing its header and share local
+  date information when formatting rows with different timestamps.
 - Append new list rows without rebuilding existing rows, and update request
   status separately. Reuse formatted dates until the source, local date,
   timezone, or locale changes; explicit refresh clears the date cache.

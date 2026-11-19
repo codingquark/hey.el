@@ -69,6 +69,7 @@
         (let ((snapshot (buffer-string)))
           (hey-thread-performance--open source-buffer)
           (should (equal snapshot (buffer-string)))
+          (should (string-match-p "2 shown" (hey--thread-header)))
           (should (string-match-p "Refreshing" (hey--thread-header))))
         (search-forward "target")
         (backward-char 3)
@@ -78,6 +79,7 @@
                              (point) 'hey-entry-id nil (point-min))))
           (set-window-start window entry-start t)
           (funcall (caar callbacks) (hey-thread-performance--envelope t))
+          (should (string-match-p "3 shown" (hey--thread-header)))
           (should (equal (car anchor) "802"))
           (should (equal (cl-subseq (hey--thread-position (point)) 0 2)
                          (cl-subseq anchor 0 2)))
@@ -202,6 +204,29 @@
                     (("id" . 803) ("body" . "Next message.")
                      ("body_state" . "hydrated")))))
         (should (equal (get-text-property (point) 'hey-entry-id) "802"))))))
+
+(ert-deftest hey-thread-first-link-keeps-distant-syntax-lazy ()
+  "Look up the first link in a long message without preparing its entire body."
+  (hey-test-with-fake nil
+    (with-temp-buffer
+      (hey-thread-mode)
+      (setq hey--thread
+            (make-hey-thread
+             :entries (list (make-hey-entry
+                             :id "1"
+                             :body (concat "[Notes](/topics/901)\n\n"
+                                           (mapconcat #'identity
+                                                      (make-list 5000 "A paragraph.")
+                                                      "\n\n"))))))
+      (hey--render-thread)
+      (search-forward "Notes")
+      (let ((end (point-max))
+            (prepare (symbol-function 'syntax-propertize)))
+        (cl-letf (((symbol-function 'syntax-propertize)
+                   (lambda (position)
+                     (should (< position end))
+                     (funcall prepare position))))
+          (should (equal (hey--link-at-point) "https://app.hey.com/topics/901")))))))
 
 (ert-deftest hey-thread-lazy-fontification-preserves-only-owned-metadata-faces ()
   "Defer offscreen faces and retain scaffold styling through later fontification."

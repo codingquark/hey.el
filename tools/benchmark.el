@@ -201,6 +201,9 @@ Run PREPARE before each sample, outside its timed region, when non-nil."
       (hey-thread-mode)
       (setq hey--thread thread)
       (hey-benchmark--measure "Render thread / 1000 messages" #'hey--render-thread)
+      (hey-benchmark--measure
+       "Thread header x1000 / 1000 messages"
+       (lambda () (dotimes (_ 1000) (hey--thread-header))))
       (let ((middle (/ (point-max) 2)))
         (hey-benchmark--measure
          "Next entry x1000 / 1000 messages"
@@ -208,6 +211,25 @@ Run PREPARE before each sample, outside its timed region, when non-nil."
         (hey-benchmark--measure
          "Previous entry x1000 / 1000 msgs"
          (lambda () (dotimes (_ 1000) (goto-char middle) (hey-previous-entry))))))
+    (with-temp-buffer
+      (hey-thread-mode)
+      (setq hey--thread
+            (make-hey-thread
+             :entries (cl-loop for id from 1 to 1000 collect
+                               (make-hey-entry
+                                :id (number-to-string id)
+                                :body "Read [the notes](https://example.invalid/notes) before Friday."))))
+      (hey--render-thread)
+      (goto-char (point-max))
+      (search-backward "Friday")
+      (let ((start (point)))
+        (hey-benchmark--measure
+         "Track cursor on prose x5 / message 1000"
+         (lambda ()
+           (goto-char start)
+           (dotimes (_ 5)
+             (forward-char 1)
+             (hey--track-body-link))))))
     (let* ((paragraph
             (concat "The **synthetic project** is ready for its next review. "
                     "Read the design notes and the follow-up questions, "

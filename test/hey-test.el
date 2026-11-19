@@ -1715,6 +1715,34 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
           (should (equal url destination))
           (should (equal before after)))))))
 
+(ert-deftest hey-ui-thread-link-matches-stay-in-the-current-entry ()
+  "Search one entry per lookup and resolve references in the accessible thread."
+  (with-temp-buffer
+    (hey-thread-mode)
+    (setq hey--thread
+          (make-hey-thread
+           :entries
+           (list (make-hey-entry :id "1" :body "[plan]: https://first.invalid")
+                 (make-hey-entry
+                  :id "2" :body
+                  "See [two\nlines](/topics/901) or [PLAN][].\n\n[plan]: https://second.invalid")
+                 (make-hey-entry :id "3" :body "Another message."))))
+    (hey--render-thread)
+    (pcase-let ((`(,_ ,start ,end) (hey--entry-starts))
+                (matcher (symbol-function 'thing-at-point-looking-at)))
+      (cl-letf (((symbol-function 'thing-at-point-looking-at)
+                 (lambda (&rest arguments)
+                   (should (<= start (point-min) (point-max) end))
+                   (apply matcher arguments))))
+        (hey-test--point-at-link "two\nlines")
+        (should (equal (hey--link-at-point) "https://app.hey.com/topics/901"))
+        (hey-test--point-at-link "or [PLAN")
+        (should (equal (hey--link-at-point) "https://first.invalid"))
+        (narrow-to-region start end)
+        (should (equal (hey--link-at-point) "https://second.invalid"))
+        (should (= (point-min) start))
+        (should (= (point-max) end))))))
+
 (ert-deftest hey-ui-thread-echo-reports-a-new-link-only ()
   "Show a destination once, stay silent otherwise, and refresh on re-entry."
   (hey-test-with-thread-body
