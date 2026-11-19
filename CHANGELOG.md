@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- Reuse a pending thread read when reopening the same posting. Let Emacs
+  style the visible Markdown on redisplay so short threads open faster.
+- Show at least ten entries when opening or refreshing The Feed, when
+  available. Display each page as it arrives and keep point on the current row.
+- Keep rendered messages in place when a thread refresh returns the same
+  content, including after a failed read or a change in list context.
+  Append new replies or replace the final message without rebuilding the
+  earlier entries.
+- Index postings as pages arrive. Return directly to the original row when
+  the list's point is still on it. Skip hidden columns and header times in
+  narrow lists.
+- Find links within the current message when moving through long threads.
+  Skip Markdown's full link lookup when point is on ordinary prose.
+  Reference links still use definitions from the accessible thread.
+- Reuse the thread's message count when redrawing its header and share local
+  date information when formatting rows with different timestamps.
+- Append new list rows without rebuilding existing rows, and update request
+  status separately. Reuse formatted dates until the source, local date,
+  timezone, or locale changes; explicit refresh clears the date cache.
+- Keep loaded threads visible during refresh, preserve message-relative reading
+  positions, and show cached contents with recovery guidance after failures.
+- Fontify thread bodies as they become visible and preserve metadata faces
+  during later fontification.
+- Cache list header counts until rows change and navigate directly between
+  message boundaries. Index attachment message context once per render.
+- Reduce repeated metadata, membership, and date formatting work. Deduplicate
+  attachments and thread senders with hash tables while preserving their order.
+- Remove Unicode C1 controls from metadata as well as raw control bytes.
+- Add `make benchmark` for repeatable, synthetic performance measurements.
+- Mark one thread read with `r` in list and thread buffers. Keep opening a
+  thread free of mailbox changes. Retain posting identity, update matching
+  rows after acknowledgment, and check read state without moving point.
+- Admit only the explicit mark-read operation through the mailbox mutation
+  boundary. Exercise it with synthetic mail in tests and the demo.
+- Clear mark-read progress from the header when the write finishes. Keep
+  successful requests quiet and report errors in the echo area without logging.
+- Redraw only rows whose read state changes. Check loaded pages until all
+  pending targets have a read state, preserving point and pagination.
 - Show CLI recovery hints for failed mail reads and attachment operations.
   Keep download hints out of the message log.
 - Open http and https body links with `RET` through `browse-url`; show their
@@ -9,6 +47,14 @@
   to the official HEY origin; non-web schemes stay inert. The `b` and `y`
   targets remain limited to the official application.
 - Preserve percent-encoded destinations and handle multiline link titles.
+- Restore ampersands escaped by the CLI in body link destinations.
+- Show the address used to send a message when the CLI supplies it. Label
+  internal notes and share notices and exclude them from message counts and
+  the thread's sender list.
+- Preserve sign-in recovery guidance when the CLI cannot clear its HTTP
+  cache after a refused refresh token.
+- Explain how to recover when the HEY CLI cannot set an attachment's macOS
+  quarantine attribute.
 - Echo link destinations on entry without logging them to `*Messages*`.
   Truncate long previews with an ellipsis; copy and open complete destinations.
   Suppress competing Markdown Eldoc output only in HEY thread buffers.

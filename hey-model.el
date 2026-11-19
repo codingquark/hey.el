@@ -16,7 +16,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'calendar)
 (require 'iso8601)
 (require 'subr-x)
 (require 'url-parse)
@@ -84,13 +83,21 @@ sources such as search which do not."
   seen
   labels collections app-url matches original-index)
 
+(cl-defstruct hey-date-format
+  "Local date and localized month names shared by a batch of posting rows.
+TODAY is a decoded local time.  Use a fresh format when the date, time zone,
+or locale changes."
+  today (month-names (make-vector 12 nil)))
+
 (cl-defstruct hey-entry
-  "One normalized entry in a HEY thread."
-  id sender timestamp body summary body-state app-url)
+  "One normalized entry in a HEY thread.
+KIND is 'comment or 'access-notice for internal entries and 'message
+for mail, including entries from a CLI that omits the kind."
+  id (kind 'message) sender timestamp body summary body-state app-url)
 
 (cl-defstruct hey-thread
   "A normalized HEY thread assembled from entries and origin context."
-  account-id account-name topic-id subject source-title senders labels
+  account-id account-name topic-id posting-id seen subject source-title senders labels
   labels-known-p collections collections-known-p entries app-url notice)
 
 (cl-defstruct hey-error
@@ -180,8 +187,14 @@ ANSI control sequences, C0/C1 controls, and Unicode bidirectional controls
 are removed.  Tabs and line breaks become ordinary spaces, runs of ASCII
 spacing collapse, and surrounding spacing is trimmed.  Non-string input
 produces the empty string so absent and null JSON fields remain non-fatal."
-  (if (not (stringp string))
-      ""
+  (cond
+   ((not (stringp string)) "")
+   ;; Most metadata is already clean; avoid allocating replacement strings.
+   ((not (string-match-p
+          "[\x00-\x1f\x7f\u0080-\u009f\x80-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]\\|\\` \\| \\'\\|  "
+          string))
+    string)
+   (t
     (let ((value string))
       ;; Remove complete terminal sequences before removing their ESC bytes.
       (setq value
@@ -189,13 +202,15 @@ produces the empty string so absent and null JSON fields remain non-fatal."
              "\e\\(?:\\[[0-?]*[ -/]*[@-~]\\|\\][^\a\e]*\\(?:\a\\|\e\\\\\\)\\|[PX^_][^\e]*\e\\\\\\|[@-_]\\)"
              "" value t t))
       (setq value (replace-regexp-in-string "[\t\n\r]+" " " value t t))
+      ;; Unicode C1 characters and raw byte values need separate ranges.
       (setq value
             (replace-regexp-in-string
-             "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]" "" value t t))
+             "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u0080-\u009f\x80-\x9f]"
+             "" value t t))
       (setq value
             (replace-regexp-in-string
              "[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]" "" value t t))
-      (string-trim (replace-regexp-in-string " +" " " value t t)))))
+      (string-trim (replace-regexp-in-string " +" " " value t t))))))
 
 (defun hey-model-validate-app-url (string)
   "Return STRING for an exact official HEY-origin URL; otherwise return nil.
@@ -611,7 +626,7 @@ by account/posting ID.  Keep the literal `all' account in row keys because
 the CLI does not reliably identify each row's originating account.
 
 Return `:value' records, `:source' as a copy with updated continuation,
-and `:warnings'.  Preserve SOURCE."
+`:box-kind' when supplied for a box, and `:warnings'.  Preserve SOURCE."
   (let* ((search-p (hey-model--known-kind-p (hey-source-kind source) 'search))
          (data (hey-model--get "data" envelope))
          (raw-records (if search-p data (hey-model--get "postings" data)))
@@ -639,7 +654,10 @@ and `:warnings'.  Preserve SOURCE."
     (pcase-let ((`(,updated . ,all-warnings)
                  (hey-model--source-with-continuation
                   source envelope values warnings)))
-      (list :value values :source updated :warnings (nreverse all-warnings)))))
+      (list :value values :source updated :warnings (nreverse all-warnings)
+            :box-kind (and (hey-model--known-kind-p (hey-source-kind source) 'box)
+                           (hey-model--command-target-string
+                            (hey-model--get "kind" data)))))))
 
 (defun hey-model-envelope-notice (envelope)
   "Return sanitized, single-line notice text from ENVELOPE, or nil."
@@ -657,17 +675,19 @@ and `:warnings'.  Preserve SOURCE."
 
 (defun hey-model-normalize-attachments (envelope)
   "Normalize attachment ENVELOPE into records, warnings, and a notice."
-  (let ((data (hey-model--array-data envelope)) records warnings ids)
+  (let ((data (hey-model--array-data envelope))
+        (ids (make-hash-table :test #'equal))
+        records warnings)
     (if (eq data 'malformed)
         (push "Attachment response does not contain a list." warnings)
       (dolist (raw data)
         (let ((id (hey-model--attachment-id (hey-model--get "id" raw)))
               (message-id (hey-model--id-string (hey-model--get "message_id" raw)))
               (size (hey-model--get "byte_size" raw)))
-          (if (or (not id) (not message-id) (member id ids))
+          (if (or (not id) (not message-id) (gethash id ids))
               (push "An attachment with an invalid or duplicate identity was skipped."
                     warnings)
-            (push id ids)
+            (puthash id t ids)
             (push (make-hey-attachment
                    :id id :message-id message-id
                    :filename (hey-model--clean-string (hey-model--get "filename" raw))
@@ -697,6 +717,18 @@ and `:warnings'.  Preserve SOURCE."
     ("not_requested" 'not-requested)
     (_ 'unknown)))
 
+(defun hey-model--entry-sender (raw)
+  "Return the send-as identity or the existing author display from RAW."
+  (let* ((sender (hey-model--get "sender" raw))
+         (email (hey-model--clean-string
+                 (hey-model--get "email_address" sender))))
+    (if (string-empty-p email)
+        (hey-model--contact-display raw)
+      (let ((name (hey-model--clean-string (hey-model--get "name" sender))))
+        (if (string-empty-p name)
+            email
+          (format "%s <%s>" name email))))))
+
 (defun hey-model--normalize-entry (raw)
   "Normalize one RAW thread entry, or return nil without an exact ID."
   (let ((id (hey-model--id-string (hey-model--get "id" raw))))
@@ -704,12 +736,20 @@ and `:warnings'.  Preserve SOURCE."
       (let ((body (hey-model--get "body" raw)))
         (make-hey-entry
          :id id
-         :sender (hey-model--contact-display raw)
+         :kind (pcase (hey-model--get "kind" raw)
+                 ("comment" 'comment)
+                 ("access_notice" 'access-notice)
+                 (_ 'message))
+         :sender (hey-model--entry-sender raw)
          :timestamp (hey-model--clean-string (hey-model--get "created_at" raw))
          :body (if (stringp body) body "")
          :summary (hey-model--clean-string (hey-model--get "summary" raw))
          :body-state (hey-model--body-state (hey-model--get "body_state" raw))
          :app-url (hey-model-validate-app-url (hey-model--get "app_url" raw)))))))
+
+(defun hey-model--message-entry-p (entry)
+  "Return non-nil when ENTRY is a message."
+  (eq (hey-entry-kind entry) 'message))
 
 (defun hey-model--sanitize-membership-records (memberships)
   "Copy and sanitize normalized MEMBERSHIPS supplied through thread context."
@@ -726,6 +766,7 @@ and `:warnings'.  Preserve SOURCE."
   "Normalize flat thread-entry ENVELOPE using normalized origin CONTEXT.
 
 CONTEXT is a plist with `:account-id', `:account-name', `:topic-id',
+`:posting-id', `:seen',
 `:subject', `:source-title', `:labels', `:labels-known-p', `:collections',
 and `:collections-known-p'.  Unknown memberships remain distinct from empty
 ones.  Preserve entry order; timestamps never reorder messages.
@@ -742,11 +783,13 @@ Return `:value' as one `hey-thread' and non-fatal `:warnings'."
                               "thread entry" index "missing or unsafe id")
                              warnings)))
     (setq entries (nreverse entries))
-    (let (senders app-url)
+    (let ((sender-set (make-hash-table :test #'equal)) senders app-url)
       (dolist (entry entries)
-        (let ((sender (hey-entry-sender entry)))
-          (unless (or (string-empty-p sender) (member sender senders))
-            (push sender senders)))
+        (when (hey-model--message-entry-p entry)
+          (let ((sender (hey-entry-sender entry)))
+            (unless (or (string-empty-p sender) (gethash sender sender-set))
+              (puthash sender t sender-set)
+              (push sender senders))))
         (unless app-url (setq app-url (hey-entry-app-url entry))))
       (list
        :value
@@ -754,6 +797,10 @@ Return `:value' as one `hey-thread' and non-fatal `:warnings'."
         :account-id (hey-model--account-id-string (plist-get context :account-id))
         :account-name (hey-model--clean-string (plist-get context :account-name))
         :topic-id (hey-model--id-string (plist-get context :topic-id))
+        :posting-id (hey-model--id-string (plist-get context :posting-id))
+        :seen (if (memq (plist-get context :seen) '(seen unseen))
+                  (plist-get context :seen)
+                'unknown)
         :subject (hey-model--clean-string (plist-get context :subject))
         :source-title (hey-model--clean-string (plist-get context :source-title))
         :senders (nreverse senders)
@@ -781,33 +828,42 @@ Return `:value' as one `hey-thread' and non-fatal `:warnings'."
                             (id id)))))
                 memberships)))
 
+(defun hey-model--format-membership-names (names full max-width)
+  "Fit sanitized NAMES and their joined FULL text within MAX-WIDTH columns."
+  (let ((width (and (integerp max-width) (max 0 max-width))))
+    (cond
+     ((string-empty-p full) "")
+     ((or (null width) (<= (string-width full) width)) full)
+     ((zerop width) (propertize "" 'help-echo full))
+     (t
+      (let ((rest names) (remaining (length names))
+            (separator-width (string-width ", "))
+            (count 0) (prefix-width 0) (shown 0) suffix)
+        ;; Measure each name once and build only the longest fitting prefix.
+        (while rest
+          (setq prefix-width (+ prefix-width (if (zerop count) 0 separator-width)
+                                (string-width (car rest)))
+                count (1+ count)
+                remaining (1- remaining))
+          (let ((tail (if (> remaining 0) (format " +%d" remaining) "")))
+            (if (<= (+ prefix-width (string-width tail)) width)
+                (setq shown count suffix tail rest (cdr rest))
+              (setq rest nil))))
+        (propertize
+         (if (> shown 0)
+             (concat (string-join (cl-subseq names 0 shown) ", ") suffix)
+           (truncate-string-to-width (car names) width nil nil "…"))
+         'help-echo full))))))
+
 (defun hey-model-format-memberships (memberships max-width)
   "Format ordered MEMBERSHIPS within MAX-WIDTH columns.
 
 The result is comma-separated.  Overflow is summarized as ` +N', for example
 `Receipts, Travel +2'.  A truncated result carries the complete text in its
 `help-echo' property.  MAX-WIDTH nil means unbounded."
-  (let* ((names (hey-model--membership-names memberships))
-         (full (string-join names ", "))
-         (width (and (integerp max-width) (max 0 max-width))))
-    (cond
-     ((string-empty-p full) "")
-     ((or (null width) (<= (string-width full) width)) full)
-     ((zerop width) (propertize "" 'help-echo full))
-     (t
-      (let ((count 0) best)
-        (while (< count (length names))
-          (let* ((shown (1+ count))
-                 (remaining (- (length names) shown))
-                 (candidate
-                  (concat (string-join (cl-subseq names 0 shown) ", ")
-                          (if (> remaining 0) (format " +%d" remaining) ""))))
-            (if (<= (string-width candidate) width)
-                (setq best candidate count shown)
-              (setq count (length names)))))
-        (unless best
-          (setq best (truncate-string-to-width (car names) width nil nil "…")))
-        (propertize best 'help-echo full))))))
+  (let ((names (hey-model--membership-names memberships)))
+    (hey-model--format-membership-names
+     names (string-join names ", ") max-width)))
 
 ;; When both kinds are present, MAX-WIDTH reserves 5 columns for the " · " and
 ;; "◇ " separators and splits the rest three-to-two in favour of labels.  A
@@ -816,6 +872,10 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
   "Return a compact membership cell for POSTING within MAX-WIDTH columns."
   (let* ((label-records (hey-posting-labels posting))
          (collection-records (hey-posting-collections posting))
+         (label-names (hey-model--membership-names label-records))
+         (collection-names (hey-model--membership-names collection-records))
+         (full-labels (string-join label-names ", "))
+         (full-collections (string-join collection-names ", "))
          (bounded (and (integerp max-width) (max 0 max-width)))
          (both (and label-records collection-records))
          (content-width (and bounded (max 0 (- bounded (if both 5 0)))))
@@ -825,9 +885,10 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
          (collection-width (and content-width
                                 (if both (- content-width label-width)
                                   (max 0 (- content-width 2)))))
-         (labels (hey-model-format-memberships label-records label-width))
-         (collections (hey-model-format-memberships
-                       collection-records collection-width))
+         (labels (hey-model--format-membership-names
+                  label-names full-labels label-width))
+         (collections (hey-model--format-membership-names
+                       collection-names full-collections collection-width))
          (cell
           (cond
            ((and (not (string-empty-p labels))
@@ -842,12 +903,6 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
             (propertize (concat "◇ " collections)
                         'face 'hey-collection-face))
            (t "")))
-         (full-labels (string-join
-                       (hey-model--membership-names (hey-posting-labels posting))
-                       ", "))
-         (full-collections
-          (string-join
-           (hey-model--membership-names (hey-posting-collections posting)) ", "))
          (help (string-join
                 (delq nil
                       (list (and (not (string-empty-p full-labels))
@@ -860,17 +915,18 @@ The result is comma-separated.  Overflow is summarized as ` +N', for example
                   cell bounded nil nil "…")))
     (if (string-empty-p help) cell (propertize cell 'help-echo help))))
 
-(defun hey-model--local-date-number (time)
-  "Return the absolute local calendar date containing TIME."
-  (let ((decoded (decode-time time)))
-    (calendar-absolute-from-gregorian
-     (list (decoded-time-month decoded)
-           (decoded-time-day decoded)
-           (decoded-time-year decoded)))))
+(defun hey-model--posting-month-name (time month names)
+  "Return the localized abbreviation for MONTH of TIME, caching it in NAMES.
+NAMES is a 12-element vector or nil for an individual posting."
+  (or (and names (aref names (1- month)))
+      (let ((name (format-time-string "%b" time)))
+        (when names (aset names (1- month) name))
+        name)))
 
 (defun hey-model-format-posting-timestamp (timestamp now)
   "Format posting TIMESTAMP relative to NOW in the local time zone.
 
+NOW can be a time value or a `hey-date-format' shared by rows in a list.
 Return HH:MM for the current local date, abbreviated month and day within the
 current year, or abbreviated month, day, and year otherwise.  Malformed
 timestamps fall back to their sanitized original text.  Apply `hey-date-face'
@@ -880,26 +936,31 @@ and retain the sanitized source timestamp in help text when reformatted."
           (if (null now)
               clean
             (condition-case nil
-                (let* ((time (encode-time (iso8601-parse clean)))
+                (let* ((shared (hey-date-format-p now))
+                       (time (encode-time (iso8601-parse clean)))
                        (decoded (decode-time time))
-                       (now-decoded (decode-time now))
-                       (month (format-time-string "%b" time))
+                       (today (if shared (hey-date-format-today now)
+                                (decode-time now)))
                        (day (decoded-time-day decoded))
-                       (year (decoded-time-year decoded)))
-                  (cond
-                   ((= (hey-model--local-date-number now)
-                       (hey-model--local-date-number time))
-                    (format-time-string "%H:%M" time))
-                   ((= year (decoded-time-year now-decoded))
-                    (format "%s %d" month day))
-                   (t (format "%s %d, %d" month day year))))
+                       (month (decoded-time-month decoded))
+                       (year (decoded-time-year decoded))
+                       (same-year (= year (decoded-time-year today))))
+                  (if (and same-year (= month (decoded-time-month today))
+                           (= day (decoded-time-day today)))
+                      (format "%02d:%02d" (decoded-time-hour decoded)
+                              (decoded-time-minute decoded))
+                    (let ((name (hey-model--posting-month-name
+                                 time month
+                                 (and shared (hey-date-format-month-names now)))))
+                      (if same-year (format "%s %d" name day)
+                        (format "%s %d, %d" name day year)))))
               (error clean)))))
     (cond
      ((string-empty-p display) display)
      ((string= display clean) (propertize display 'face 'hey-date-face))
      (t (propertize display 'face 'hey-date-face 'help-echo clean)))))
 
-(defun hey-model-posting-row (posting layout)
+(defun hey-model-posting-row (posting layout &optional omit-memberships)
   "Format POSTING as a vector for symbolic LAYOUT.
 
 The frozen layouts are:
@@ -909,6 +970,7 @@ The frozen layouts are:
   `narrow'  [subject sender memberships date]
   `minimal' [subject date]
 
+With OMIT-MEMBERSHIPS, leave the membership cell out of the vector.
 Only explicit `unseen' subjects get a marker and `hey-unseen-face'.
 Memberships retain their complete values in `help-echo'."
   (let* ((subject (hey-posting-subject posting))
@@ -924,22 +986,19 @@ Memberships retain their complete values in `help-echo'."
                  (hey-posting-timestamp posting)))
          (sender (hey-posting-contacts posting)))
     (pcase layout
-      ('wide
-       (vector subject-cell sender
-               (hey-model--row-memberships posting 28) date))
-      ('medium
-       (vector subject-cell sender
-               (hey-model--row-memberships posting 24) date))
-      ('narrow
-       (vector subject-cell sender
-               (hey-model--row-memberships posting 16) date))
+      ((or 'wide 'medium 'narrow)
+       (if omit-memberships (vector subject-cell sender date)
+         (vector subject-cell sender
+                 (hey-model--row-memberships
+                  posting (pcase layout ('wide 28) ('medium 24) ('narrow 16)))
+                 date)))
       ('minimal (vector subject-cell date))
       (_ (error "Unknown HEY posting layout: %S" layout)))))
 
 (defun hey-model--markdown-escape (value)
   "Escape sanitized metadata VALUE for literal Markdown text."
   (replace-regexp-in-string
-   "[][\\\\`*{}_()#+.!|>-]" "\\\\\\&"
+   "[][\\\\`*{}_()#+.!|<>-]" "\\\\\\&"
    (hey-model--clean-string value) t nil))
 
 (defun hey-model--thread-field (label value)
@@ -962,19 +1021,19 @@ Memberships retain their complete values in `help-echo'."
   (let ((names (hey-model--membership-names memberships)))
     (if names (string-join names ", ") "none")))
 
-(defun hey-model-thread-markdown (thread)
-  "Return the package-owned Markdown scaffold for normalized THREAD.
+(defun hey-model-thread-message-count (thread)
+  "Count messages in THREAD."
+  (cl-count-if #'hey-model--message-entry-p (hey-thread-entries thread)))
 
-Metadata is sanitized and Markdown-escaped.  Entry bodies are already
-Markdown from the CLI and are inserted unchanged; their headings do not
-define UI entry boundaries."
-  (let ((parts nil)
-        (entries (hey-thread-entries thread)))
+(defun hey-model-thread-preamble (thread)
+  "Return sanitized, Markdown-escaped metadata and its separator for THREAD."
+  (let (parts)
     (push (hey-model--thread-field "Subject" (hey-thread-subject thread)) parts)
     (push (hey-model--thread-field
            "Senders" (string-join (hey-thread-senders thread) ", ")) parts)
     (push (hey-model--thread-field
-           "Messages shown" (number-to-string (length entries))) parts)
+           "Messages shown"
+           (number-to-string (hey-model-thread-message-count thread))) parts)
     (push (hey-model--thread-field "Account" (hey-thread-account-name thread)) parts)
     (push (hey-model--thread-field "Opened from" (hey-thread-source-title thread)) parts)
     (when (hey-thread-labels-known-p thread)
@@ -990,11 +1049,36 @@ define UI entry boundaries."
     (when (hey-thread-notice thread)
       (push (hey-model--thread-field "Notice" (hey-thread-notice thread)) parts))
     (push "\n---\n" parts)
+    (apply #'concat (nreverse parts))))
+
+(defun hey-model--entry-heading (entry)
+  "Return the author or labeled internal heading for ENTRY."
+  (let ((author (or (hey-entry-sender entry) ""))
+        (label (pcase (hey-entry-kind entry)
+                 ('comment "Internal note")
+                 ('access-notice "Share notice"))))
+    (cond
+     ((null label) author)
+     ((string-empty-p author) label)
+     (t (concat label " by " author)))))
+
+(defun hey-model-thread-markdown (thread)
+  "Return the package-owned Markdown scaffold for normalized THREAD.
+
+Metadata is sanitized and Markdown-escaped.  Entry bodies are already
+Markdown from the CLI and are inserted unchanged; their headings do not
+define UI entry boundaries."
+  (hey-model-entries-markdown
+   (hey-thread-entries thread) (hey-model-thread-preamble thread)))
+
+(defun hey-model-entries-markdown (entries &optional preamble)
+  "Return Markdown for ENTRIES in order, optionally starting with PREAMBLE."
+  (let ((parts (and preamble (list preamble))))
     (dolist (entry entries)
       (let* ((entry-id (hey-entry-id entry))
              (header (format "\n## %s — %s\n\n"
                              (hey-model--markdown-escape
-                              (hey-entry-sender entry))
+                              (hey-model--entry-heading entry))
                              (hey-model--markdown-escape
                               (hey-entry-timestamp entry))))
              (body (hey-entry-body entry))

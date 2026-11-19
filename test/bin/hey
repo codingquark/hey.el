@@ -30,7 +30,14 @@ if [ -n "$record" ]; then
 fi
 
 case $scenario in
-  auth-refused)
+  mark-read|mark-read-delay)
+    [ "$scenario" != mark-read-delay ] || sleep 2
+    cat "$fixture_dir/mark-read-success.json"
+    ;;
+  auth-refused|auth-refused-cache-warning)
+    if [ "$scenario" = auth-refused-cache-warning ]; then
+      printf '%s\n' 'warning: could not clear cached responses in /synthetic/private-cache/http: permission denied' >&2
+    fi
     cat "$fixture_dir/auth-refused.json" >&2
     exit 3
     ;;
@@ -41,7 +48,7 @@ case $scenario in
   attachment-list)
     cat "$fixture_dir/attachments.json"
     ;;
-  attachment-save|attachment-delay|attachment-failed|attachment-bad-result)
+  attachment-save|attachment-delay|attachment-failed|attachment-quarantine-failed|attachment-bad-result)
     attachment_id=
     output=
     while [ "$#" -gt 0 ]; do
@@ -61,6 +68,10 @@ case $scenario in
     if [ "$scenario" = attachment-delay ]; then sleep 2; fi
     if [ "$scenario" = attachment-failed ]; then
       cat "$fixture_dir/transport-error.json" >&2
+      exit 7
+    fi
+    if [ "$scenario" = attachment-quarantine-failed ]; then
+      printf '%s\n' '{"ok":false,"code":"api","error":"could not mark file as downloaded: operation not supported"}' >&2
       exit 7
     fi
     printf 'Synthetic attachment.\n' > "$output"

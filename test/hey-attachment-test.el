@@ -99,6 +99,36 @@
         (should (string-match-p (regexp-quote (nth 2 case)) (buffer-string)))
         (should-not (string-match-p "Press g to retry" (buffer-string)))))))
 
+(ert-deftest hey-attachment-render-preserves-message-context-and-refreshes-it ()
+  "Retain first matching entries, missing fields, and refreshed message context."
+  (hey-test-with-fake nil
+    (with-temp-buffer
+      (hey-attachment-mode)
+      (setq hey--attachment-thread
+            (make-hey-thread
+             :entries (list (make-hey-entry :id "801" :timestamp "2026-09-17")
+                            (make-hey-entry :id "801" :sender "Duplicate")
+                            (make-hey-entry :id "802" :sender "" :timestamp "")
+                            (make-hey-entry :id "803")
+                            (make-hey-entry :id "804" :sender "Alice")))
+            hey--attachments
+            (cl-loop for id in '("801" "801" "802" "803" "804" "805")
+                     for index from 1
+                     collect (make-hey-attachment
+                              :id (format "%s:%d" id index) :message-id id
+                              :filename "fixture.txt" :content-type "text/plain"
+                              :byte-size index)))
+      (hey--render-attachments)
+      (should (equal (mapcar (lambda (row) (aref (cadr row) 3))
+                             tabulated-list-entries)
+                     '("2026-09-17" "2026-09-17" " " "" "Alice" "805")))
+      (setf (hey-thread-entries hey--attachment-thread)
+            (list (make-hey-entry :id "801" :sender "Updated")))
+      (hey--render-attachments)
+      (should (equal (mapcar (lambda (row) (aref (cadr row) 3))
+                             tabulated-list-entries)
+                     '("Updated" "Updated" "802" "803" "804" "805"))))))
+
 (ert-deftest hey-attachment-list-is-on-demand-and-reused ()
   (save-window-excursion
     (let ((thread-buffer (generate-new-buffer " *attachment-origin*"))
@@ -167,9 +197,10 @@
     (should-not (string-match-p "arg=--force" (hey-test-read-record)))))
 
 (ert-deftest hey-attachment-save-cancel-timeout-and-failure-clean-staging ()
-  (dolist (kind '(cancel timeout failure bad-result))
+  (dolist (kind '(cancel timeout failure quarantine-failure bad-result))
     (hey-attachment-test--with-save
         (pcase kind ('failure "attachment-failed") ('bad-result "attachment-bad-result")
+               ('quarantine-failure "attachment-quarantine-failed")
                (_ "attachment-delay"))
       (let ((hey-attachment-save-timeout-seconds (if (eq kind 'timeout) 0.2 5)))
         (let (messages)
@@ -189,6 +220,9 @@
                      ('cancel "Attachment download canceled.")
                      ('timeout "Attachment download timed out; retry saving.")
                      ('failure "Attachment download failed. Use the synthetic success scenario")
+                     ('quarantine-failure
+                      (concat "Attachment download failed. Choose a destination "
+                              "that supports the macOS quarantine attribute."))
                      (_ "Attachment could not be verified or saved; choose another destination."))
                    messages)))
         (should-not hey--attachment-save-status)

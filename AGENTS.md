@@ -2,10 +2,11 @@
 
 ## Scope and safety
 
-Build a read-only Emacs interface to the official HEY CLI. Do not
-expose mailbox or application-state mutations, generic command
-runners, or options that enable writes. New CLI operations require
-explicit design review.
+Build an Emacs interface to the official HEY CLI. Reading leaves
+mailbox state unchanged. The explicit `hey-mark-read` command may mark
+one thread read through `hey seen`; no other mailbox or application-state
+mutation is permitted. Do not expose generic command runners or options
+that enable other writes. New CLI operations require explicit design review.
 
 Attachment saving may write a user-selected local file. Never replace
 an existing destination. Verify the staged file before publication
@@ -19,7 +20,8 @@ never resolve or fall back to the installed CLI.
 
 The CLI owns authentication and operational writes such as credential
 refresh, installation IDs, and HTTP caches. Document those effects
-accurately; read-only refers to mailbox and application state.
+accurately; mailbox reads and the explicit mark-read command have distinct
+effects.
 
 ## Code
 
@@ -44,10 +46,12 @@ names, and the `hey-` prefix. Declare dependencies and support Emacs
 
 ## Prose
 
-Follow Denote and Modus themes: direct summaries, active voice, present
-tense. Start function docstrings with an imperative summary; keep
-simple ones to one line. Explain data shapes and non-obvious contracts
-beside the code. Comments explain purpose or rationale.
+Follow Denote and Modus themes: direct summaries, active voice,
+present tense. Start function docstrings with an imperative summary;
+keep simple ones to one line. Explain data shapes and non-obvious
+contracts beside the code. Comments explain purpose or rationale. Read
+modus-themes docs from `~/.config/emacs`. Similarly, read for
+`elfeed`.
 
 Keep usage and development instructions in `README.md`, release
 history in `CHANGELOG.md`, and validation evidence in commit or review
@@ -58,7 +62,7 @@ machine paths and private research in the ignored `.project-local.md`.
 
 Preserve unrelated worktree changes. Give concurrent writers disjoint
 paths and review the integrated diff. Run `make check` before review;
-it covers tests, compilation, lint, the read-operation audit, packaging,
+it covers tests, compilation, lint, the operation-boundary audit, packaging,
 and clean installation. Use synthetic data for UI exercises.
 
 Authenticated validation is a separately approved human session;

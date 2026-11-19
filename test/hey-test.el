@@ -352,7 +352,9 @@
       (should (eq hey--layout 'wide))
       (should (= (length (cadar (hey--tabulated-entries)))
                  (length tabulated-list-format)))
-      (hey--resize-buffer 70)
+      (cl-letf (((symbol-function 'hey-model--row-memberships)
+                 (lambda (&rest _) (ert-fail "Formatted a hidden membership column"))))
+        (hey--resize-buffer 70))
       (should (eq hey--layout 'narrow))
       (should (= (length (cadar (hey--tabulated-entries)))
                  (length tabulated-list-format)))
@@ -439,6 +441,23 @@
       (should (string-match "updated [0-9][0-9]:[0-9][0-9]" header))
       (should (eq (get-text-property (match-beginning 0) 'face header)
                   'hey-header-updated-face)))))
+
+(ert-deftest hey-ui-status-header-formats-only-visible-refresh-times ()
+  "Format the refresh time only in the wide list header."
+  (hey-test-with-list
+    (let ((hey--last-refreshed (encode-time 0 0 11 3 9 2026))
+          calls)
+      (cl-letf (((symbol-function 'format-time-string)
+                 (lambda (format time)
+                   (push (list format time) calls)
+                   "updated 11:00")))
+        (dolist (layout '(minimal narrow medium))
+          (let ((hey--layout layout))
+            (should-not (string-match-p "updated" (hey--status-header)))))
+        (should-not calls)
+        (let ((hey--layout 'wide))
+          (should (string-match-p "updated 11:00" (hey--status-header))))
+        (should (equal calls (list (list "updated %H:%M" hey--last-refreshed))))))))
 
 (ert-deftest hey-ui-status-header-state-face-preserves-severity-precedence ()
   "Let a failure outrank a partial-result warning in the header state."
@@ -844,6 +863,105 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
       (should (equal (hey-posting-subject (car hey--records)) "Fresh"))
       (funcall revert-buffer-function nil nil)
       (should (= calls 2)))))
+
+(ert-deftest hey-ui-feed-shows-pages-progressively-and-keeps-the-last-page-whole ()
+  "Show early rows while fetching and leave the next cursor for manual use."
+  (hey-test-with-list
+    (let (pages success)
+      (setq hey--source (hey-test--source 'box "feedbox" "Newsletters")
+            hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _box page _owner _key _gen ok _bad)
+                    (push page pages)
+                    (setq success ok)
+                    nil))))
+      (cl-flet ((deliver (ids cursor)
+                  (funcall success
+                           (hey-test--postings-envelope
+                            (mapcar (lambda (id) (hey-test--posting id id "Mail"))
+                                    ids)
+                            cursor))))
+        (hey-refresh)
+        (should (equal pages '(nil)))
+        (deliver '(1 2) "p2")
+        (should (equal pages '("p2" nil)))
+        (should hey--loading)
+        (hey-next-row)
+        (should (equal (tabulated-list-get-id) '("101" "2")))
+        (deliver '(2 3 4 5 6 7 8 9) "p3")
+        (should (= (length hey--records) 9))
+        (should (equal pages '("p3" "p2" nil)))
+        (deliver '(10 11) "p4")
+        (should (= (length hey--records) 11))
+        (should-not hey--loading)
+        (should (equal (tabulated-list-get-id) '("101" "2")))
+        (should (string-match-p "\\[Load more\\]" (buffer-string)))
+        (hey-load-more)
+        (deliver '(12) "p5")
+        (should (equal pages '("p4" "p3" "p2" nil)))
+        (should (= (length hey--records) 12))
+        (should-not hey--loading)))))
+
+(ert-deftest hey-ui-feed-formats-ten-rows-on-five-short-pages ()
+  "Stop at ten rows and format each posting once."
+  (hey-test-with-list
+    (let ((formatter (symbol-function 'hey--row-vector))
+          pages formatted)
+      (setq hey--source (hey-test--source 'box "feed" "The Feed")
+            hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _box page _owner _key _gen ok _bad)
+                    (let ((id (if page (string-to-number page) 1)))
+                      (should (<= id 9))
+                      (push page pages)
+                      (funcall ok (hey-test--postings-envelope
+                                   (list (hey-test--posting id id "First")
+                                         (hey-test--posting (1+ id) (1+ id) "Second"))
+                                   (number-to-string (+ id 2)))))))))
+      (cl-letf (((symbol-function 'hey--row-vector)
+                 (lambda (posting now)
+                   (push (hey-posting-id posting) formatted)
+                   (funcall formatter posting now))))
+        (hey-refresh))
+      (should (equal (reverse pages) '(nil "3" "5" "7" "9")))
+      (should (equal (reverse formatted) (mapcar #'number-to-string (number-sequence 1 10))))
+      (should (equal (hey-source-continuation hey--source) "11"))
+      (should-not hey--error)
+      (should-not hey--loading))))
+
+(ert-deftest hey-ui-feed-stops-on-failure-and-ignores-superseded-pages ()
+  "Resolve a numeric Feed by kind and keep background pages session-local."
+  (hey-test-with-list
+    (let (success failure pages)
+      (setq hey--source (hey-test--source 'box "27" "Newsletters")
+            hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a box page _owner _key _gen ok bad)
+                    (push (list box page) pages)
+                    (setq success ok failure bad)
+                    nil))))
+      (let ((short-page '(("data" ("kind" . "feedbox")
+                                  ("postings" (("id" . 1) ("name" . "First")))
+                                  ("next_page" . "p2")))))
+        (hey-refresh)
+        (funcall success short-page)
+        (funcall failure (make-hey-error :category 'network :message "Offline"))
+        (should (equal (hey-source-continuation hey--source) "p2"))
+        (should (string-match-p "\\[Load more\\]" (buffer-string)))
+        (should (= (length hey--records) 1))
+        (hey-refresh)
+        (funcall success short-page)
+        (let ((late success))
+          (hey--switch-source (hey-test--source))
+          (funcall late short-page)
+          (should-not hey--records)
+          (funcall success (hey-test--postings-envelope
+                            (list (hey-test--posting 50 50 "Imbox")) "more"))
+          (should-not hey--loading)
+          (should (equal (mapcar #'hey-posting-id hey--records) '("50")))
+          (should (equal (reverse pages)
+                         '(("27" nil) ("27" "p2") ("27" nil) ("27" "p2")
+                           ("imbox" nil)))))))))
 
 (ert-deftest hey-ui-load-more-deduplicates-and-stops-nonadvancing-cursors ()
   (hey-test-with-list
@@ -1324,6 +1442,110 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
         (should (= (point) (car starts))))
       (kill-buffer (current-buffer)))))
 
+(ert-deftest hey-ui-thread-identifies-senders-and-internal-entries ()
+  (with-temp-buffer
+    (hey-thread-mode)
+    (setq hey--thread
+          (plist-get
+           (hey-model-normalize-thread
+            '(("ok" . t)
+              ("data"
+               (("id" . 801) ("kind" . "message")
+                ("creator" ("name" . "Primary"))
+                ("alternative_sender_name" . "Old sender name")
+                ("sender" ("name" . "Billing")
+                          ("email_address" . "\e[31mbilling@example.invalid\e[0m"))
+                ("body" . "Mail from Billing."))
+               (("id" . 802) ("kind" . "comment")
+                ("creator" ("name" . "Note Author"))
+                ("body" . "Internal body."))
+               (("id" . 803) ("kind" . "access_notice")
+                ("creator" ("name" . "Share Author"))
+                ("body" . "Sharing body."))
+               (("id" . 804)
+                ("creator" ("name" . "Legacy"))
+                ("sender" ("name" . "Missing address"))
+                ("body" . "Old CLI body."))
+               (("id" . 805) ("kind" . "message")
+                ("sender" ("email_address" . "alternate@example.invalid")))))
+            '(:subject "Synthetic subject" :source-title "Imbox"))
+           :value))
+    (hey--render-thread)
+    (should (equal (hey-thread-senders hey--thread)
+                   '("Billing <billing@example.invalid>" "Legacy"
+                     "alternate@example.invalid")))
+    (should (string-match-p "Messages shown: 3" (buffer-string)))
+    (should (string-match-p "3 shown" (hey--thread-header)))
+    (should (= (length (hey--entry-starts)) 5))
+    (dolist (expected '("## Billing \\<billing@example\\.invalid\\> —"
+                        "## Internal note by Note Author —"
+                        "## Share notice by Share Author —"
+                        "## Legacy —"
+                        "## alternate@example\\.invalid —"
+                        "Internal body."
+                        "Sharing body."))
+      (should (string-match-p (regexp-quote expected) (buffer-string))))))
+
+(ert-deftest hey-ui-entry-navigation-respects-boundaries-and-narrowing ()
+  "Find adjacent entries without matching body headings or leaving the view."
+  (with-temp-buffer
+    (insert "Preamble\n" (propertize "#" 'hey-entry-start t)
+            " First\n# Body heading\n"
+            (propertize "#" 'hey-entry-start 'other)
+            " Not an entry\n" (propertize "#" 'hey-entry-start t)
+            " Second\nBody\n")
+    (let* ((starts (hey--entry-starts))
+           (first (car starts))
+           (second (cadr starts)))
+      (goto-char (point-min))
+      (should-error (hey-previous-entry) :type 'user-error)
+      (should (= (point) (point-min)))
+      (hey-next-entry)
+      (should (= (point) first))
+      (should-error (hey-previous-entry) :type 'user-error)
+      (should (= (point) first))
+      (forward-char 1)
+      (hey-previous-entry)
+      (should (= (point) first))
+      (hey-next-entry)
+      (should (= (point) second))
+      (should-error (hey-next-entry) :type 'user-error)
+      (should (= (point) second))
+      (hey-previous-entry)
+      (should (= (point) first))
+      (narrow-to-region (1+ first) (point-max))
+      (goto-char (point-min))
+      (should-error (hey-previous-entry) :type 'user-error)
+      (hey-next-entry)
+      (should (= (point) second))
+      (should-error (hey-previous-entry) :type 'user-error)
+      (goto-char (point-max))
+      (should-error (hey-next-entry) :type 'user-error)
+      (hey-previous-entry)
+      (should (= (point) second)))))
+
+(ert-deftest hey-ui-header-counts-follow-replacements-and-row-edits ()
+  "Refresh counts after source replacement, row redraw, and a full render."
+  (hey-test-with-list
+    (setq hey--records
+          (plist-get (hey-model-normalize-postings
+                      (hey-test--postings-envelope
+                       (list (hey-test--posting 501 901 "Counted")))
+                      hey--source) :value))
+    (hey--render-list)
+    (should (string-match-p "1/1" (hey--status-header)))
+    (setf (hey-posting-seen (car hey--records)) 'seen)
+    (hey--redraw-postings hey--records)
+    (should (string-match-p "0/1" (hey--status-header)))
+    (setf (hey-posting-seen (car hey--records)) 'unknown)
+    (hey--render-list)
+    (should (string-match-p "?/1" (hey--status-header)))
+    (setq hey--records (list (copy-hey-posting (car hey--records))))
+    (setf (hey-posting-seen (car hey--records)) 'unseen)
+    (should (string-match-p "1/1" (hey--status-header)))
+    (setq hey--records nil)
+    (should (string-match-p "0/0" (hey--status-header)))))
+
 (ert-deftest hey-ui-thread-normalization-warnings-are-visible ()
   (with-temp-buffer
     (hey-thread-mode)
@@ -1500,7 +1722,37 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
      "https://example.invalid/papa%20name.pdf")
     ("Read [quebec](/topics/901\n \"Note\") now."
      "quebec"
-     "https://app.hey.com/topics/901"))
+     "https://app.hey.com/topics/901")
+    ("Read [romeo](https://example.invalid/a%2Fb?x=1&amp;copy;=2&y=3)."
+     "romeo"
+     "https://example.invalid/a%2Fb?x=1&copy;=2&y=3")
+    ("Read [sierra](/topics/901?a=1&amp;amp;b=2&amp;#x41;=3)."
+     "sierra"
+     "https://app.hey.com/topics/901?a=1&amp;b=2&#x41;=3")
+    ("Read https://example.invalid/tango?a=1&amp;b=2 now."
+     "b=2"
+     "https://example.invalid/tango?a=1&b=2")
+    ("Read https://example.invalid/victor?a=1&amp;copy;=2 now."
+     "copy;=2"
+     "https://example.invalid/victor?a=1&copy;=2")
+    ("Read (https://example.invalid/a;b%2Fc?x=1&amp;utm\\_source=mail)."
+     "source"
+     "https://example.invalid/a;b%2Fc?x=1&utm_source=mail")
+    ("Read (https://example.invalid/route\\_(east)?x=1&amp;y=2)."
+     "east"
+     "https://example.invalid/route_(east)?x=1&y=2")
+    ("![Chart.jpg](https://example.invalid/chart%2Fq?a=1&amp;copy;=2) <https://example.invalid/chart%2Fq?a=1&amp;copy;=2>"
+     ") <https://example.invalid/chart"
+     "https://example.invalid/chart%2Fq?a=1&copy;=2")
+    ("Read <https://example.invalid/a,b?q=1&amp;copy;=2>."
+     "a,b"
+     "https://example.invalid/a,b?q=1&copy;=2")
+    ("Read <https://[2001:db8::1]/route?q=1&amp;copy;=2>."
+     "db8"
+     "https://[2001:db8::1]/route?q=1&copy;=2")
+    ("Read [https://example.invalid/whiskey?a=1&amp;copy;=2](https://example.invalid/whiskey?a=1&amp;copy;=2)."
+     "whiskey"
+     "https://example.invalid/whiskey?a=1&copy;=2"))
   "Body link forms: buffer text, a label to visit, and the destination.")
 
 (ert-deftest hey-ui-thread-link-keeps-the-written-destination ()
@@ -1508,15 +1760,19 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
   (dolist (case hey-test--link-forms)
     (pcase-let ((`(,markdown ,label ,destination) case))
       (hey-test-with-thread-body markdown
-        (let (copied echoed)
+        (let (copied echoed opened)
           (cl-letf (((symbol-function 'kill-new)
                      (lambda (url &rest _) (setq copied url)))
+                    ((symbol-function 'browse-url)
+                     (lambda (url &rest _) (setq opened url)))
                     ((symbol-function 'message)
                      (lambda (format-string &rest args)
                        (setq echoed (apply #'format format-string args)))))
             (hey-test--point-at-link label)
             (hey-copy-link)
             (should (equal copied destination))
+            (hey-follow-link)
+            (should (equal opened destination))
             (hey-show-link)
             (should (equal echoed (concat "Link: " destination)))))))))
 
@@ -1564,6 +1820,8 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
   "Preserve caller match data when resolving or rejecting a body link."
   (dolist (case (append hey-test--link-forms
                        '(("Read [local](file:///tmp/private)." "local" nil)
+                         ("Read <file:///tmp/https://example.invalid/q?a=1&amp;b=2>."
+                          "example.invalid" nil)
                          ("Read plain text." "plain" nil))))
     (pcase-let ((`(,markdown ,label ,destination) case))
       (hey-test-with-thread-body markdown
@@ -1574,6 +1832,59 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
                (after (match-data)))
           (should (equal url destination))
           (should (equal before after)))))))
+
+(ert-deftest hey-ui-thread-link-matches-stay-in-the-current-entry ()
+  "Search one entry per lookup and resolve references in the accessible thread."
+  (with-temp-buffer
+    (hey-thread-mode)
+    (setq hey--thread
+          (make-hey-thread
+           :entries
+           (list (make-hey-entry :id "1" :body "[plan]: https://first.invalid")
+                 (make-hey-entry
+                  :id "2" :body
+                  "See [two\nlines](/topics/901) or [PLAN][].\n\n[plan]: https://second.invalid")
+                 (make-hey-entry :id "3" :body "Another message."))))
+    (hey--render-thread)
+    (pcase-let ((`(,_ ,start ,end) (hey--entry-starts))
+                (matcher (symbol-function 'thing-at-point-looking-at)))
+      (cl-letf (((symbol-function 'thing-at-point-looking-at)
+                 (lambda (&rest arguments)
+                   (should (<= start (point-min) (point-max) end))
+                   (apply matcher arguments))))
+        (hey-test--point-at-link "two\nlines")
+        (should (equal (hey--link-at-point) "https://app.hey.com/topics/901"))
+        (hey-test--point-at-link "or [PLAN")
+        (should (equal (hey--link-at-point) "https://first.invalid"))
+        (narrow-to-region start end)
+        (should (equal (hey--link-at-point) "https://second.invalid"))
+        (should (= (point-min) start))
+        (should (= (point-max) end))))))
+
+(ert-deftest hey-thread-link-tracking-skips-prose-and-keeps-fontified-references ()
+  "Skip Markdown's entry scan on prose and retain its fontified link targets."
+  (hey-test-with-fake nil
+    (hey-test-with-thread-body
+        (concat "[r]: https://example.invalid/one\n[s]: https://example.invalid/two"
+                "\n\n[one][r][two][s]\nVisit https://example.invalid/current later.")
+      (rename-buffer "HEY synthetic link tracking" t)
+      (let ((noninteractive nil)) (font-lock-mode 1))
+      (font-lock-ensure)
+      (let ((lookup (symbol-function 'markdown-link-at-pos)) (calls 0))
+        (cl-letf (((symbol-function 'markdown-link-at-pos)
+                   (lambda (position) (cl-incf calls) (funcall lookup position))))
+          (hey-test--point-at-link "later")
+          (should-not (hey--link-at-point))
+          (should (zerop calls))
+          (hey-test--point-at-link "current")
+          (should (equal (hey--link-at-point) "https://example.invalid/current"))
+          (goto-char (point-min))
+          (search-forward "[two")
+          (backward-char 1)
+          (let* ((ref (nth 4 (funcall lookup (point))))
+                 (url (car (markdown-reference-definition ref))))
+            (should url)
+            (should (equal (hey--link-at-point) url))))))))
 
 (ert-deftest hey-ui-thread-echo-reports-a-new-link-only ()
   "Show a destination once, stay silent otherwise, and refresh on re-entry."
@@ -1667,12 +1978,256 @@ Default SUBJECT to the synthetic subject; an empty string omits it."
                        :value)))
     (hey--render-thread)
     (goto-char (point-min))
-    (should (memq 'hey-metadata-label-face (get-text-property (point) 'face)))
+    (should (memq 'hey-metadata-label-face
+                  (ensure-list (get-text-property (point) 'face))))
     (dolist (text '("Subject: body text" "Labels: ordinary prose"))
       (search-forward text)
       (let ((face (get-text-property (- (point) (length text)) 'face)))
         (should-not (if (listp face) (memq 'hey-metadata-label-face face)
                       (eq face 'hey-metadata-label-face)))))))
+
+(defun hey-list-test--load (raw &optional cursor)
+  "Render normalized synthetic RAW postings with optional CURSOR."
+  (let ((result (hey-model-normalize-postings
+                 (hey-test--postings-envelope raw cursor) hey--source)))
+    (setq hey--records (plist-get result :value)
+          hey--source (plist-get result :source)))
+  (hey--render-list))
+
+(defun hey-list-test--ids ()
+  "Return the composite identities of all displayed rows."
+  (save-excursion
+    (goto-char (point-min))
+    (let (ids)
+      (while (not (eobp))
+        (when-let* ((id (tabulated-list-get-id))) (push id ids))
+        (forward-line 1))
+      (nreverse ids))))
+
+(ert-deftest hey-list-status-and-failure-preserve-mail-rows ()
+  "Leave rows and point intact while changing loading and failure status."
+  (hey-test-with-list
+    (hey-list-test--load (list (hey-test--posting 1 11 "First")
+                              (hey-test--posting 2 12 "Second")) "more")
+    (hey-next-row)
+    (move-to-column 8)
+    (let ((selected (point)) failure)
+      (with-silent-modifications
+        (put-text-property (line-beginning-position) (line-end-position)
+                           'hey-test-row-preserved t))
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _s _p _o _k _g _ok bad) (setq failure bad) nil))))
+      (cl-letf (((symbol-function 'hey--row-vector)
+                 (lambda (&rest _) (ert-fail "Unchanged rows were formatted"))))
+        (hey-load-more)
+        (should (= (point) selected))
+        (should-not (string-match-p "\\[Load more\\]" (buffer-string)))
+        (funcall failure (make-hey-error :category 'network :message "Offline"))
+        (should (= (point) selected))
+        (should (get-text-property (point) 'hey-test-row-preserved))
+        (should (string-match-p "Showing stale results" (buffer-string)))
+        (should (string-match-p "\\[Load more\\]" (buffer-string)))))))
+
+(ert-deftest hey-list-pagination-formats-only-new-identities ()
+  "Append unique rows while preserving prior text, point, counts, and footers."
+  (hey-test-with-list
+    (hey-list-test--load (list (hey-test--posting 1 11 "First")
+                              (hey-test--posting 2 12 "Second")) "more")
+    (hey-next-row)
+    (let ((selected (point))
+          (formatter (symbol-function 'hey--row-vector)) formatted success)
+      (with-silent-modifications
+        (put-text-property (line-beginning-position) (line-end-position)
+                           'hey-test-row-preserved t))
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _s _p _o _k _g ok _bad) (setq success ok) nil))))
+      (cl-letf (((symbol-function 'hey--row-vector)
+                 (lambda (posting now)
+                   (push (hey-posting-id posting) formatted)
+                   (funcall formatter posting now))))
+        (hey-load-more)
+        (should-not formatted)
+        (funcall success
+                 (hey-test--postings-envelope
+                  (list (hey-test--posting 2 12 "Duplicate")
+                        (hey-test--posting 3 13 "Third")) "last"))
+        (should (equal formatted '("3")))
+        (should (equal (hey-list-test--ids) '(("101" "1") ("101" "2") ("101" "3"))))
+        (should (= (point) selected))
+        (should (get-text-property (point) 'hey-test-row-preserved))
+        (should (string-match-p "3/3" (hey--status-header)))
+        (setq formatted nil)
+        (hey-load-more)
+        (funcall success (hey-test--postings-envelope nil))
+        (should-not formatted)
+        (should (= (length (hey-list-test--ids)) 3))
+        (should-not (string-match-p "\\[Load more\\]" (buffer-string)))))))
+
+(ert-deftest hey-list-append-rebuilds-when-membership-columns-appear ()
+  "Fall back to a full render when a new page changes the visible columns."
+  (hey-test-with-list
+    (cl-letf (((symbol-function 'hey--minimum-window-width) (lambda () 130)))
+      (hey-list-test--load '((("id" . 1) ("topic_id" . 11) ("name" . "First"))) "more")
+      (should-not (cl-find "Labels / collections" tabulated-list-format
+                           :key #'car :test #'equal))
+      (let (success)
+        (setq hey--operation-overrides
+              `((hey-cli-box-view
+                 . ,(lambda (_a _s _p _o _k _g ok _bad) (setq success ok) nil))))
+        (hey-load-more)
+        (funcall success (hey-test--postings-envelope
+                          (list (hey-test--posting 2 12 "With labels")))))
+      (should (cl-find "Labels / collections" tabulated-list-format
+                       :key #'car :test #'equal))
+      (should (equal (hey-list-test--ids) '(("101" "1") ("101" "2"))))
+      (dolist (id (hey-list-test--ids))
+        (goto-char (point-min))
+        (while (not (equal (tabulated-list-get-id) id)) (forward-line 1))
+        (should (= (length (tabulated-list-get-entry)) 4))))))
+
+(ert-deftest hey-list-date-cells-survive-resize-and-seen-changes ()
+  "Reuse dates across layout changes while updating read-state presentation."
+  (hey-test-with-list
+    (let ((formatter (symbol-function 'hey-model-format-posting-timestamp))
+          (calls 0))
+      (cl-letf (((symbol-function 'hey-model-format-posting-timestamp)
+                 (lambda (stamp now) (cl-incf calls) (funcall formatter stamp now))))
+        (hey-list-test--load (list (hey-test--posting 1 11 "First")
+                                  (hey-test--posting 2 12 "Second")))
+        (should (= calls 1))
+        (hey--resize-buffer 130)
+        (hey--resize-buffer 40)
+        (setf (hey-posting-seen (car hey--records)) 'seen)
+        (hey--redraw-postings (list (car hey--records)))
+        (should (= calls 1))
+        (should (string-match-p "1/2" (hey--status-header)))
+        (hey--first-row)
+        (should-not (string-prefix-p "●" (aref (tabulated-list-get-entry) 0)))
+        (setf (hey-posting-timestamp (car hey--records)) "2026-09-04T10:00:00")
+        (hey--redraw-postings (list (car hey--records)))
+        (should (= calls 2))))))
+
+(ert-deftest hey-list-date-cache-invalidates-on-context-and-refresh ()
+  "Recompute dates after day, time zone, locale, source, and refresh changes."
+  (hey-test-with-list
+    (let ((now (encode-time 0 0 12 3 9 2026))
+          (process-environment (copy-sequence process-environment))
+          (system-time-locale "C")
+          (formatter (symbol-function 'hey-model-format-posting-timestamp))
+          (calls 0))
+      (cl-letf (((symbol-function 'current-time) (lambda () now))
+                ((symbol-function 'hey-model-format-posting-timestamp)
+                 (lambda (stamp instant)
+                   (cl-incf calls) (funcall formatter stamp instant))))
+        (hey-list-test--load (list (hey-test--posting 1 11 "First")))
+        (should (= calls 1))
+        (setq now (time-add now (days-to-time 1)))
+        (hey--update-list-status)
+        (should (= calls 2))
+        ;; Change the cache input without changing Emacs's process-wide zone.
+        (push "TZ=UTC0" process-environment)
+        (hey--render-list t)
+        (should (= calls 3))
+        (setq system-time-locale "POSIX")
+        (hey--render-list t)
+        (should (= calls 4))
+        (setq hey--source (hey-test--source 'box "feed" "Feed"))
+        (hey--render-list t)
+        (should (= calls 5))
+        (setq hey--operation-overrides
+              `((hey-cli-box-view
+                 . ,(lambda (_a _s _p _o _k _g ok _bad)
+                      (funcall ok (hey-test--postings-envelope
+                                   (list (hey-test--posting 2 12 "Replacement"))))))))
+        (hey-refresh)
+        (should (= calls 6))
+        (should (= (hash-table-count hey--date-cache) 1))))))
+
+(ert-deftest hey-list-refresh-replaces-indexed-posting-and-memberships ()
+  "Keep the old posting during a refresh and use the new one after it finishes."
+  (hey-test-with-list
+    (let (success)
+      (setq hey--operation-overrides
+            `((hey-cli-box-view
+               . ,(lambda (_a _s _p _o _k _g ok _bad) (setq success ok) nil))))
+      (cl-letf (((symbol-function 'hey--minimum-window-width) (lambda () 130)))
+        (hey-list-test--load (list (hey-test--posting 1 11 "Before")))
+        (should (assq 'memberships hey--columns))
+        (hey-refresh)
+        (should (equal (hey-posting-subject (hey--posting-at-point)) "Before"))
+        (funcall success
+                 (hey-test--postings-envelope
+                  '((("id" . 1) ("topic_id" . 11) ("name" . "After")))))
+        (should (equal (tabulated-list-get-id) '("101" "1")))
+        (should (equal (hey-posting-subject (hey--posting-at-point)) "After"))
+        (should-not (assq 'memberships hey--columns))))))
+
+(ert-deftest hey-list-status-recovers-after-an-external-table-reprint ()
+  "Detect a displaced footer marker before changing an externally printed table."
+  (hey-test-with-list
+    (hey-list-test--load (list (hey-test--posting 1 11 "First")) "more")
+    (tabulated-list-print t)
+    (setq hey--loading t)
+    (hey--update-list-status)
+    (should (equal (hey-list-test--ids) '(("101" "1"))))
+    (should-not (string-match-p "\\[Load more\\]" (buffer-string)))))
+
+(ert-deftest hey-list-append-matches-a-full-render-after-rows-change ()
+  "Keep incremental output identical to a full render across layouts and dates."
+  (dolist (width '(40 70 100 140))
+    (hey-test-with-list
+      (cl-letf (((symbol-function 'hey--minimum-window-width) (lambda () width)))
+        (hey-list-test--load
+         '((("id" . 1) ("topic_id" . 11) ("name" . "Old")
+            ("created_at" . "1999-09-03T10:00:00"))) "more")
+        (let (success)
+          (setq hey--operation-overrides
+                `((hey-cli-box-view
+                   . ,(lambda (_a _s _p _o _k _g ok _bad) (setq success ok) nil))))
+          (hey-load-more)
+          ;; The acknowledged read state changes while the next page is pending.
+          (setf (hey-posting-seen (car hey--records)) 'seen)
+          (hey--redraw-postings (list (car hey--records)))
+          (funcall success
+                   (hey-test--postings-envelope
+                    '((("id" . 2) ("topic_id" . 12) ("name" . "New")
+                       ("created_at" . "2026-09-03T10:00:00"))) "later")))
+        (let ((incremental (buffer-substring-no-properties (point-min) (point-max))))
+          (hey--render-list t)
+          (should (equal incremental
+                         (buffer-substring-no-properties (point-min) (point-max)))))))))
+
+; Run time zone mutation only in the fresh batch suite, where TZ restores it.
+(ert-deftest hey-list-date-cache-invalidates-when-current-zone-name-is-unchanged ()
+  "Reformat historical dates after a timezone rule change with the same offset."
+  (skip-unless noninteractive)
+  (let ((original-zone (getenv "TZ"))
+        (system-time-locale "C")
+        (now (encode-time 0 0 12 4 1 2026 t))
+        (stamp "2025-07-01T23:30:00Z"))
+    (unwind-protect
+        (with-temp-buffer
+          (hey-list-mode)
+          (setq hey--source (make-hey-source :key '(box "101" "imbox")))
+          (set-time-zone-rule "GMT0BST,M3.5.0/1,M10.5.0")
+          (hey--prepare-date-cache now)
+          (let ((hey--render-date-cache hey--date-cache))
+            (should (equal (hey--list-date stamp now) "Jul 2, 2025")))
+          (let ((old-context (format-time-string "%Y-%m-%d %Z %z" now))
+                (old-environment (getenv "TZ")))
+            (set-time-zone-rule "GMT0")
+            ;; The previous cache key cannot distinguish these rule changes.
+            (should (equal old-context (format-time-string "%Y-%m-%d %Z %z" now)))
+            (should (equal old-environment (getenv "TZ"))))
+          (should (hey--prepare-date-cache now))
+          (let ((hey--render-date-cache hey--date-cache))
+            (should (equal (hey--list-date stamp now) "Jul 1, 2025"))
+            (should (equal-including-properties
+                     (hey--list-date stamp now)
+                     (hey-model-format-posting-timestamp stamp now)))))
+      (set-time-zone-rule original-zone))))
 
 (provide 'hey-test)
 ;;; hey-test.el ends here

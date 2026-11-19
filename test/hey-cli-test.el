@@ -87,7 +87,7 @@
   (should-error (hey-cli-build-search "account-17" "query" 0))
   (should-error (hey-cli-build-search "account-17" "query" "2")))
 
-(ert-deftest hey-cli-builders-expose-no-write-operation ()
+(ert-deftest hey-cli-builders-expose-only-approved-operations ()
   (let ((builders
          (seq-filter
           (lambda (symbol)
@@ -97,11 +97,29 @@
                      "move" "bubble" "trash" "spam" "ignore" "share"
                      "unshare" "approve" "deny" "add" "create" "update"
                      "delete" "remove" "send")))
-    (should (= (length builders) 15))
+    (should (= (length builders) 16))
+    (should (memq 'hey-cli-build-mark-read builders))
     (dolist (builder builders)
       (let ((name (symbol-name builder)))
         (dolist (verb forbidden)
           (should-not (string-match-p (concat "-" verb "\\(?:-\\|$\\)") name)))))))
+
+(ert-deftest hey-cli-mark-read-builds-exact-account-scoped-argv ()
+  (dolist (account '("account-17" "account-18" "all"))
+    (dolist (posting '("1" "123456" "9223372036854775807"))
+      (should (equal (hey-cli-build-mark-read account posting)
+                     (list "--base-url" "https://app.hey.com"
+                           "--account" account "seen" posting "--json"))))))
+
+(ert-deftest hey-cli-mark-read-rejects-invalid-posting-ids ()
+  (dolist (posting '(nil 1 0 -1 1.5 "" "0" "-1" "+1" "01" " 1" "1 "
+                    "1\n" "1\t" "--help" "1 2" "1,2" "1\0" "topic-1"
+                    "1.0" "1e3" "9223372036854775808"
+                    "18446744073709551615"))
+    (should-error (hey-cli-build-mark-read "account-17" posting)
+                  :type 'user-error))
+  (dolist (account '(nil "" "line\nbreak"))
+    (should-error (hey-cli-build-mark-read account "1") :type 'user-error)))
 
 (defun hey-cli-test--start-version (owner success failure)
   "Start a version request for OWNER with SUCCESS and FAILURE callbacks."
@@ -240,6 +258,32 @@ the retry instruction."
           (with-current-buffer "*hey-log*"
             (should-not (string-match-p (regexp-quote (nth 2 case))
                                        (buffer-string)))))))))
+
+(ert-deftest hey-cli-transport-preserves-auth-error-after-cache-warning ()
+  (hey-test-with-fake '(:scenario "auth-refused-cache-warning")
+    (with-temp-buffer
+      (let (failure)
+        (hey-cli-test--start-version
+         (current-buffer) (lambda (_value) (ert-fail "Expected a CLI error"))
+         (lambda (error) (setq failure error)))
+        (hey-test-await (lambda () failure))
+        (should (eq (hey-error-category failure) 'auth))
+        (should (equal (hey-error-code failure) "auth"))
+        (should (equal (hey-error-hint failure) "Run: hey auth login"))
+        (should (string-suffix-p "The CLI could not clear its HTTP cache."
+                                 (hey-error-message failure)))
+        (should-not (string-match-p "private-cache" (hey-error-message failure)))
+        (with-current-buffer "*hey-log*"
+          (should-not (string-match-p "private-cache" (buffer-string))))))))
+
+(ert-deftest hey-cli-transport-rejects-other-text-around-structured-errors ()
+  (let ((warning "warning: could not clear cached responses in /synthetic/cache: failed\n")
+        (auth "{\"ok\":false,\"code\":\"auth\",\"error\":\"Sign in\"}\n")
+        (other "{\"ok\":false,\"code\":\"api\",\"error\":\"Failed\"}\n"))
+    (should-not (hey-cli--structured-cli-error (concat "warning: other\n" auth) 3))
+    (should-not (hey-cli--structured-cli-error (concat warning auth) 7))
+    (should-not (hey-cli--structured-cli-error (concat warning other) 3))
+    (should-not (hey-cli--structured-cli-error (concat warning auth "trailing text") 3))))
 
 (ert-deftest hey-cli-transport-allows-success-with-redacted-stderr-note ()
   (hey-test-with-fake '(:scenario "stderr-success")
@@ -722,6 +766,118 @@ the retry instruction."
           (should-error (hey-test-assert-exact-fake link) :type 'ert-test-failed))
       (when (file-directory-p directory)
         (delete-directory directory t)))))
+
+(ert-deftest hey-cli-mark-read-accepts-acknowledgment-without-read-state ()
+  (hey-test-with-fake '(:scenario "mark-read")
+    (with-temp-buffer
+      (let (result failure request (finalized 0))
+        (setq request
+              (hey-cli-mark-read
+               "account-17" "2468" (current-buffer) '("account-17" "2468") 3
+               (lambda (value) (setq result value))
+               (lambda (error) (setq failure error))
+               (lambda () (cl-incf finalized))))
+        (hey-test-await (lambda () (> finalized 0)))
+        (should-not failure)
+        (should (equal result '(("ok" . t))))
+        (should (equal (hey-cli--request-source-key request)
+                       '("account-17" "2468")))
+        (should (= (hey-cli--request-generation request) 3))
+        (should (= finalized 1))
+        (should (equal
+                 (seq-filter (lambda (line) (string-prefix-p "arg=" line))
+                             (split-string (hey-test-read-record) "\n" t))
+                 '("arg=--base-url" "arg=https://app.hey.com"
+                   "arg=--account" "arg=account-17" "arg=seen"
+                   "arg=2468" "arg=--json")))
+        (should-not (hey-cli-test--live-processes))
+        (should-not (hey-cli-test--transport-buffers))))))
+
+(ert-deftest hey-cli-mark-read-cleans-up-after-failure ()
+  (dolist (case '(("error-3" . auth) ("error-4" . forbidden)
+                  ("error-7" . api) ("malformed" . malformed-json)))
+    (hey-test-with-fake (list :scenario (car case))
+      (with-temp-buffer
+        (let (result failure (finalized 0))
+          (hey-cli-mark-read
+           "account-17" "2468" (current-buffer) '(posting) 1
+           (lambda (value) (setq result value))
+           (lambda (error) (setq failure error))
+           (lambda () (cl-incf finalized)))
+          (hey-test-await (lambda () (> finalized 0)))
+          (should-not result)
+          (should (eq (hey-error-category failure) (cdr case)))
+          (should (= finalized 1))
+          (should-not (hey-cli-test--live-processes))
+          (should-not (hey-cli-test--transport-buffers)))))))
+
+(ert-deftest hey-cli-mark-read-finalizes-interrupted-requests-once ()
+  (dolist (reason '(timeout canceled owner-death))
+    (hey-test-with-fake
+        (list :scenario "mark-read-delay"
+              :timeout (if (eq reason 'timeout) 0.05 2))
+      (let ((owner (generate-new-buffer " *hey-mark-owner*"))
+            request result failures (finalized 0))
+        (unwind-protect
+            (progn
+              (setq request
+                    (hey-cli-mark-read
+                     "account-17" "2468" owner '(posting) 1
+                     (lambda (value) (setq result value))
+                     (lambda (error) (push error failures))
+                     (lambda () (cl-incf finalized))))
+              (pcase reason
+                ('canceled (hey-cli-cancel-request request))
+                ('owner-death (kill-buffer owner)))
+              (hey-test-await (lambda () (> finalized 0)))
+              (should-not result)
+              (if (eq reason 'owner-death)
+                  (should-not failures)
+                (should (= (length failures) 1))
+                (should (eq (hey-error-category (car failures)) reason)))
+              (hey-cli-cancel-request request)
+              (should (= finalized 1))
+              (should-not (hey-cli-test--live-processes))
+              (should-not (hey-cli-test--transport-buffers)))
+          (when (buffer-live-p owner) (kill-buffer owner)))))))
+
+(ert-deftest hey-cli-mark-read-finalizes-before-process-start ()
+  (hey-test-with-fake '(:scenario "mark-read")
+    (with-temp-buffer
+      (let ((finalized 0) failure)
+        (should-error
+         (hey-cli-mark-read
+          "account-17" "--help" (current-buffer) '(posting) 1
+          #'ignore #'ignore (lambda () (cl-incf finalized)))
+         :type 'user-error)
+        (should (= finalized 1))
+        (let ((hey-executable "/no/such/hey-test-program"))
+          (should-not
+           (hey-cli-mark-read
+            "account-17" "2468" (current-buffer) '(posting) 1
+            #'ignore (lambda (error) (setq failure error))
+            (lambda () (cl-incf finalized)))))
+        (should (= finalized 2))
+        (should (eq (hey-error-category failure) 'configuration))
+        (should-not (file-exists-p hey-test-record-file))
+        (should-not (hey-cli-test--live-processes))
+        (should-not (hey-cli-test--transport-buffers))))))
+
+(ert-deftest hey-cli-mark-read-finalizes-after-setup-quit ()
+  (hey-test-with-fake '(:scenario "mark-read-delay")
+    (with-temp-buffer
+      (let ((finalized 0) escaped)
+        (cl-letf (((symbol-function 'run-at-time)
+                   (lambda (&rest _arguments) (signal 'quit nil))))
+          (condition-case nil
+              (hey-cli-mark-read
+               "account-17" "2468" (current-buffer) '(posting) 1
+               #'ignore #'ignore (lambda () (cl-incf finalized)))
+            (quit (setq escaped t))))
+        (should escaped)
+        (should (= finalized 1))
+        (should-not (hey-cli-test--live-processes))
+        (should-not (hey-cli-test--transport-buffers))))))
 
 (provide 'hey-cli-test)
 ;;; hey-cli-test.el ends here
