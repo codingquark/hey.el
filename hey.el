@@ -5,7 +5,7 @@
 
 ;; Author: Dhavan Vaidya <456712+codingquark@users.noreply.github.com>
 ;; Assisted-by: Codex:gpt-5, gpt-6
-;; Version: 0.3.0
+;; Version: 0.4.0
 ;; Package-Requires: ((emacs "28.2") (markdown-mode "2.8"))
 ;; Keywords: mail, comm
 ;; URL: https://github.com/codingquark/hey.el
@@ -450,9 +450,6 @@ cell's help text, except when the cell already carries its own help text."
 (defun hey--time-zone-changed (&rest _arguments)
   "Invalidate cached dates after a time zone change."
   (setq hey--time-zone-generation (1+ hey--time-zone-generation)))
-
-;; Equal present-day offsets do not imply equal historical time zone rules.
-(advice-add 'set-time-zone-rule :after #'hey--time-zone-changed)
 
 (defun hey--prepare-date-cache (now)
   "Prepare date cells for NOW and return non-nil when their context changed."
@@ -2231,6 +2228,10 @@ Ignore lookup errors to keep this `post-command-hook' function active."
 
 (define-derived-mode hey-list-mode tabulated-list-mode "HEY-List"
   "Browse HEY posting lists and explicitly mark individual threads read."
+  ;; Equal present-day offsets do not imply equal historical time zone rules.
+  (unless (advice-member-p #'hey--time-zone-changed 'set-time-zone-rule)
+    (advice-add 'set-time-zone-rule :after #'hey--time-zone-changed))
+  (add-hook 'window-size-change-functions #'hey--window-size-change)
   (setq-local hey--account nil
               hey--configured-account nil
               hey--source nil
@@ -2301,8 +2302,6 @@ Ignore lookup errors to keep this `post-command-hook' function active."
 ;; Keep text navigation while excluding Markdown editing, export, and process
 ;; commands.
 (set-keymap-parent hey-thread-mode-map hey-common-map)
-
-(add-hook 'window-size-change-functions #'hey--window-size-change)
 
 (defun hey-unload-function ()
   "Remove global hooks and advice before unloading HEY."

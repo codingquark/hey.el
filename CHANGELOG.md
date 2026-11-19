@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-11-19
 
+- Start tracking window size and time zone changes when a HEY list opens.
 - Reuse a pending thread read when reopening the same posting. Let Emacs
   style the visible Markdown on redisplay so short threads open faster.
 - Show at least ten entries when opening or refreshing The Feed, when
